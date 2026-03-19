@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="R34Browser" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#17141f" />
+    <meta
+      name="description"
+      content="Mobile-first static Rule34 browser with local saves, tag discovery, and download-first actions."
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>R34Browser</title>
+    <script>
+      ;(() => {
+        const isLocalHost =
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1'
+
+        if (!isLocalHost || !('serviceWorker' in navigator)) {
+          return
+        }
+
+        const resetKey = 'r34browser-dev-cache-reset-v1'
+        if (sessionStorage.getItem(resetKey) === 'done') {
+          return
+        }
+
+        window.addEventListener('load', () => {
+          navigator.serviceWorker
+            .getRegistrations()
+            .then(async (registrations) => {
+              if (registrations.length === 0) {
+                sessionStorage.setItem(resetKey, 'done')
+                return
+              }
+
+              await Promise.all(
+                registrations.map((registration) => registration.unregister()),
+              )
+
+              if ('caches' in window) {
+                const cacheKeys = await caches.keys()
+                await Promise.all(cacheKeys.map((key) => caches.delete(key)))
+              }
+
+              sessionStorage.setItem(resetKey, 'done')
+              window.location.reload()
+            })
+            .catch(() => {
+              sessionStorage.setItem(resetKey, 'done')
+            })
+        })
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
