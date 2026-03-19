@@ -116,12 +116,12 @@ export function SearchComposer({
     suppressTokenClickRef.current = null
     tokenHoldTimerRef.current = window.setTimeout(() => {
       suppressTokenClickRef.current = index
+      triggerSearchTokenSwapHaptic(hapticsEnabled)
       setTokens((current) =>
         current.map((entry, tokenIndex) =>
           tokenIndex === index ? toggleTokenMode(entry) : entry,
         ),
       )
-      triggerSearchTokenSwapHaptic(hapticsEnabled)
       tokenHoldTimerRef.current = null
     }, TOKEN_MODE_SWAP_HOLD_MS)
   }

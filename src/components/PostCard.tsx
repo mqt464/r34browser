@@ -224,21 +224,21 @@ export function PostCard({
     }
 
     if (!saved) {
-      await savePost(post)
       if (source === 'default') {
         triggerHaptic(preferences.hapticsEnabled, 'light')
       }
+      await savePost(post)
     }
 
     flashLike()
   }
 
   const handleDownload = async (source: ActionSource = 'default') => {
-    await saveMedia(post, preferences.preferShareOnMobile)
-    await recordDownload(post)
     if (source === 'default') {
       triggerHaptic(preferences.hapticsEnabled, 'nudge')
     }
+    await saveMedia(post, preferences.preferShareOnMobile)
+    await recordDownload(post)
   }
 
   const performAction = async (action: HoldAction) => {
@@ -322,8 +322,8 @@ export function PostCard({
     safelySetPointerCapture(event.currentTarget, event.pointerId)
     clearHoldTimer()
     holdTimerRef.current = window.setTimeout(() => {
-      updateHoldMenu({ activeAction: null, x, y })
       triggerHoldMenuOpenHaptic(preferences.hapticsEnabled)
+      updateHoldMenu({ activeAction: null, x, y })
       holdTimerRef.current = null
     }, HOLD_DELAY_MS)
   }
@@ -353,10 +353,10 @@ export function PostCard({
     }
 
     if (activeAction !== currentMenu.activeAction) {
-      updateHoldMenu({ ...currentMenu, activeAction })
       if (activeAction) {
         triggerHoldMenuHoverHaptic(preferences.hapticsEnabled)
       }
+      updateHoldMenu({ ...currentMenu, activeAction })
     }
   }
 

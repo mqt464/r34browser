@@ -8,20 +8,9 @@ interface ActiveScrollLock {
   allowScrollRef?: RefObject<HTMLElement | null>
 }
 
-interface StyleSnapshot {
-  overflow: string
-  position: string
-  top: string
-  left: string
-  right: string
-  width: string
-}
-
 const activeLocks = new Map<number, ActiveScrollLock>()
 let nextLockId = 0
-let lockedScrollX = 0
-let lockedScrollY = 0
-let bodyStyleSnapshot: StyleSnapshot | null = null
+let bodyOverflowSnapshot: string | null = null
 let htmlOverflowSnapshot: string | null = null
 let listenersAttached = false
 
@@ -83,53 +72,32 @@ function detachScrollBlockers() {
 }
 
 function lockDocumentScroll() {
-  if (typeof document === 'undefined' || bodyStyleSnapshot) {
+  if (typeof document === 'undefined' || bodyOverflowSnapshot !== null) {
     return
   }
 
   const { body, documentElement } = document
-  lockedScrollX = window.scrollX
-  lockedScrollY = window.scrollY
-  bodyStyleSnapshot = {
-    overflow: body.style.overflow,
-    position: body.style.position,
-    top: body.style.top,
-    left: body.style.left,
-    right: body.style.right,
-    width: body.style.width,
-  }
+  bodyOverflowSnapshot = body.style.overflow
   htmlOverflowSnapshot = documentElement.style.overflow
 
   body.classList.add('no-scroll')
   documentElement.style.overflow = 'hidden'
   body.style.overflow = 'hidden'
-  body.style.position = 'fixed'
-  body.style.top = `-${lockedScrollY}px`
-  body.style.left = '0'
-  body.style.right = '0'
-  body.style.width = '100%'
 }
 
 function unlockDocumentScroll() {
-  if (typeof document === 'undefined' || !bodyStyleSnapshot) {
+  if (typeof document === 'undefined' || bodyOverflowSnapshot === null) {
     return
   }
 
   const { body, documentElement } = document
-  const snapshot = bodyStyleSnapshot
 
   body.classList.remove('no-scroll')
-  body.style.overflow = snapshot.overflow
-  body.style.position = snapshot.position
-  body.style.top = snapshot.top
-  body.style.left = snapshot.left
-  body.style.right = snapshot.right
-  body.style.width = snapshot.width
+  body.style.overflow = bodyOverflowSnapshot
   documentElement.style.overflow = htmlOverflowSnapshot ?? ''
 
-  bodyStyleSnapshot = null
+  bodyOverflowSnapshot = null
   htmlOverflowSnapshot = null
-  window.scrollTo(lockedScrollX, lockedScrollY)
 }
 
 export function useScrollLock(locked: boolean, options: ScrollLockOptions = {}) {

@@ -167,15 +167,15 @@ export function PostPage() {
     if (saved) {
       await unsavePost(post.id)
     } else {
-      await savePost(post)
       triggerHaptic(preferences.hapticsEnabled)
+      await savePost(post)
     }
   }
 
   const handleDownload = async () => {
+    triggerHaptic(preferences.hapticsEnabled, [14, 18, 12])
     await saveMedia(post, preferences.preferShareOnMobile)
     await recordDownload(post)
-    triggerHaptic(preferences.hapticsEnabled, [14, 18, 12])
   }
 
   const handleHide = async () => {

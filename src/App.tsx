@@ -155,6 +155,7 @@ function App() {
   const refreshingTabRef = useRef<ResettableTabId | null>(null)
 
   const triggerTabReset = useCallback((tabId: ResettableTabId) => {
+    triggerScrollResetTriggerHaptic(preferences.hapticsEnabled)
     refreshingTabRef.current = tabId
     scrollPositionsRef.current[tabId] = 0
     lastScrollYRef.current = 0
@@ -165,7 +166,6 @@ function App() {
       ...current,
       [tabId]: current[tabId] + 1,
     }))
-    triggerScrollResetTriggerHaptic(preferences.hapticsEnabled)
 
     if (refreshTimeoutRef.current !== null) {
       window.clearTimeout(refreshTimeoutRef.current)
