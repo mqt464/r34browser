@@ -27,6 +27,14 @@ npm run check
 
 `npm run check` runs the release gate locally by executing lint and build back to back.
 
+## GitHub Pages
+
+This app is configured for GitHub Pages deployment through [`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml).
+
+1. Push the repository to GitHub on the `main` branch.
+2. In the repository settings, ensure GitHub Pages is set to use GitHub Actions.
+3. After the deploy workflow completes, the site will be available at `https://<owner>.github.io/r34browser/`.
+
 ## Release Checklist
 
 1. Run `npm run check`.
