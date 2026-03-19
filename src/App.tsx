@@ -57,6 +57,8 @@ const BACK_TO_TOP_SHOW_DEPTH = 1200
 const BACK_TO_TOP_SHOW_MIN_DELTA = 90
 const BACK_TO_TOP_HIDE_MIN_DELTA = 120
 const BACK_TO_TOP_NEAR_TOP = 200
+const NAV_HIDE_SCROLL_START = 120
+const NAV_SHOW_MIN_UP_DELTA = 72
 const INITIAL_SCROLL_POSITIONS: Record<TabId, number> = {
   home: 0,
   search: 0,
@@ -144,6 +146,7 @@ function App() {
   const scrollDirectionRef = useRef(0)
   const upScrollDeltaRef = useRef(0)
   const downScrollDeltaRef = useRef(0)
+  const navUpScrollDeltaRef = useRef(0)
   const lastScrollYRef = useRef(window.scrollY)
   const lastSearchRef = useRef(location.search)
   const pullCueRef = useRef(HIDDEN_PULL_CUE)
@@ -188,10 +191,20 @@ function App() {
       }
 
       if (!pullGestureRef.current) {
-        if (currentY > lastY && currentY > 120) {
-          setNavHidden(true)
-        } else {
+        if (deltaY < 0) {
+          navUpScrollDeltaRef.current += -deltaY
+        } else if (deltaY > 0) {
+          navUpScrollDeltaRef.current = 0
+        }
+
+        if (currentY <= NAV_HIDE_SCROLL_START) {
           setNavHidden(false)
+          navUpScrollDeltaRef.current = 0
+        } else if (deltaY > 0) {
+          setNavHidden(true)
+        } else if (deltaY < 0 && navUpScrollDeltaRef.current >= NAV_SHOW_MIN_UP_DELTA) {
+          setNavHidden(false)
+          navUpScrollDeltaRef.current = 0
         }
       }
 
@@ -240,17 +253,8 @@ function App() {
     scrollDirectionRef.current = 0
     upScrollDeltaRef.current = 0
     downScrollDeltaRef.current = 0
-
-    if (!showBackToTop) {
-      return
-    }
-
-    const frameId = window.requestAnimationFrame(() => {
-      setShowBackToTop(false)
-    })
-
-    return () => window.cancelAnimationFrame(frameId)
-  }, [currentTabId, showingStandalonePage, showBackToTop])
+    setShowBackToTop(false)
+  }, [currentTabId, showingStandalonePage])
 
   useEffect(() => {
     if (!pullEnabled) {

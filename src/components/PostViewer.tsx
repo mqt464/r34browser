@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { useScrollLock } from '../hooks/useScrollLock'
 import { getDetailMediaUrl, getMediaPosterUrl } from '../lib/media'
 import type { FeedItem } from '../types'
 
@@ -66,10 +67,7 @@ export function PostViewer({
   } | null>(null)
   const [swipeOffset, setSwipeOffset] = useState(0)
 
-  useEffect(() => {
-    document.body.classList.add('no-scroll')
-    return () => document.body.classList.remove('no-scroll')
-  }, [])
+  useScrollLock(true)
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {

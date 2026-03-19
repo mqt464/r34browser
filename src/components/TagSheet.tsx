@@ -1,7 +1,8 @@
 import { X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useScrollLock } from '../hooks/useScrollLock'
 import { fetchTagMeta } from '../lib/api'
 import { getTagTypeDetails, sortTagsByCategory } from '../lib/tagMeta'
 import { useAppContext } from '../state/useAppContext'
@@ -36,6 +37,9 @@ export function TagSheet({
   const location = useLocation()
   const navigate = useNavigate()
   const [meta, setMeta] = useState<Map<string, TagMeta>>(new Map())
+  const listRef = useRef<HTMLDivElement | null>(null)
+
+  useScrollLock(open, { allowScrollRef: listRef })
 
   const handleTagClick = (tag: string) => {
     const pendingQuery = readPendingQuery(location.state)
@@ -89,10 +93,8 @@ export function TagSheet({
       }
     }
 
-    document.body.classList.add('no-scroll')
     document.addEventListener('keydown', onKeyDown)
     return () => {
-      document.body.classList.remove('no-scroll')
       document.removeEventListener('keydown', onKeyDown)
     }
   }, [onClose, open])
@@ -121,7 +123,7 @@ export function TagSheet({
             <X aria-hidden="true" size={18} />
           </button>
         </header>
-        <div className="tag-sheet-list">
+        <div className="tag-sheet-list" ref={listRef}>
           {sortedTags.map((tag) => {
             const item = meta.get(tag)
             const details = getTagTypeDetails(item?.type ?? 0)

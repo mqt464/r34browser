@@ -7,6 +7,7 @@ import {
   triggerHoldMenuOpenHaptic,
   triggerHoldMenuSelectionHaptic,
 } from '../lib/device'
+import { useScrollLock } from '../hooks/useScrollLock'
 import { getCardMediaUrl, getMediaPosterUrl } from '../lib/media'
 import { useAppContext } from '../state/useAppContext'
 import type { FeedItem } from '../types'
@@ -149,6 +150,8 @@ export function PostCard({
   const isLongPost = aspectRatio >= LONG_POST_RATIO
   const isVideoPost = post.mediaType === 'video'
   const viewerPost = activeViewerIndex === null ? null : viewerPosts[activeViewerIndex] ?? null
+
+  useScrollLock(Boolean(holdMenu))
 
   useEffect(() => {
     setMediaLoaded(false)
@@ -369,6 +372,7 @@ export function PostCard({
     }
 
     if (holdMenuRef.current) {
+      event.preventDefault()
       updateActiveAction(event.clientX, event.clientY, surface)
       return
     }
