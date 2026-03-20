@@ -253,7 +253,12 @@ function App() {
     scrollDirectionRef.current = 0
     upScrollDeltaRef.current = 0
     downScrollDeltaRef.current = 0
-    setShowBackToTop(false)
+
+    const frameId = window.requestAnimationFrame(() => {
+      setShowBackToTop(false)
+    })
+
+    return () => window.cancelAnimationFrame(frameId)
   }, [currentTabId, showingStandalonePage])
 
   useEffect(() => {

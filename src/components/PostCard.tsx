@@ -85,6 +85,7 @@ function renderMedia(
         draggable={false}
         height={post.sampleHeight || post.height || undefined}
         onError={onMediaReady}
+        onLoadedMetadata={onMediaReady}
         onLoadedData={onMediaReady}
         loop
         poster={getMediaPosterUrl(post) || undefined}

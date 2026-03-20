@@ -8,7 +8,7 @@ import { useAppContext } from '../state/useAppContext'
 import type { LocalLibraryItem } from '../types'
 
 export function HomePage() {
-  const { preferences, hiddenIds, libraryVersion, mutedTags } = useAppContext()
+  const { preferences, hiddenIds, libraryVersion, mutedTags, savedIds } = useAppContext()
   const [savedPosts, setSavedPosts] = useState<LocalLibraryItem[]>([])
   const hasCredentials = Boolean(preferences.credentials.userId && preferences.credentials.apiKey)
   const blockedTags = useMemo(
@@ -38,6 +38,7 @@ export function HomePage() {
     blockedTags,
     credentials: preferences.credentials,
     enabled: hasCredentials,
+    excludedPostIds: savedIds,
     savedPosts,
   })
 

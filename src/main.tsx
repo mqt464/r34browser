@@ -7,11 +7,23 @@ import { AppProvider } from './state/AppProvider.tsx'
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(
-      (error) => {
+    let reloading = false
+
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloading) {
+        return
+      }
+
+      reloading = true
+      window.location.reload()
+    })
+
+    navigator.serviceWorker
+      .register(`${import.meta.env.BASE_URL}sw.js`)
+      .then((registration) => registration.update())
+      .catch((error) => {
         console.error('Service worker registration failed', error)
-      },
-    )
+      })
   })
 } else if (import.meta.env.DEV && 'serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then((registrations) => {

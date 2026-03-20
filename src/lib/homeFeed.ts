@@ -17,6 +17,8 @@ const POSITIONAL_SCAN_DEPTH = 8
 const HOME_QUERY_COUNT = 3
 const HOME_LIMIT_MIN = 5
 const HOME_LIMIT_MAX = 10
+const HOME_BATCH_PAGE_SCAN_LIMIT = 8
+const HOME_FRESH_POST_TARGET = 12
 const HOME_RECENT_ANCHOR_MEMORY = 9
 const TAG_META_CACHE_KEY = 'r34browser.homeTagMeta'
 const TAG_META_CACHE_TTL = 1000 * 60 * 60 * 24 * 14
@@ -219,37 +221,6 @@ function getAnchorType(meta: TagMeta) {
   return null
 }
 
-function maybeSelectGeneralTags(entries: WeightedTag[]) {
-  const selected: string[] = []
-  const topGeneralScore = entries[0]?.score ?? 0
-  const includeGeneralChance = Math.min(0.85, topGeneralScore / 10)
-
-  if (entries.length === 0 || Math.random() >= includeGeneralChance) {
-    return selected
-  }
-
-  const first = weightedChoice(entries)
-  if (!first) {
-    return selected
-  }
-
-  selected.push(first.tag)
-
-  const allowSecond =
-    entries.length > 1 && Math.random() < Math.min(0.45, topGeneralScore / 16)
-
-  if (!allowSecond) {
-    return selected
-  }
-
-  const second = weightedChoice(entries, new Set(selected))
-  if (second) {
-    selected.push(second.tag)
-  }
-
-  return selected.slice(0, MAX_GENERAL_TAGS)
-}
-
 export async function buildHomeFeedModel(options: {
   blockedTags: string[]
   credentials: ApiCredentials
@@ -438,65 +409,36 @@ export function createHomeFeedQueries(
   const usedAnchors = new Set<string>()
   const recentAnchorSet = new Set(recentAnchors)
   const queries: SearchQuery[] = []
-  const pools = [
-    model.anchorBuckets.copyright,
-    model.anchorBuckets.character,
-    model.anchorBuckets.artist,
-  ]
-  const discoveryTargetCount =
-    queryCount > 1 && (model.discoveryAnchors.length > 0 || model.weightedAnchors.length > 0)
-      ? 1
-      : 0
-  const personalizedTargetCount = queryCount - discoveryTargetCount
+  const poolOrder: AnchorType[] = ['copyright', 'character', 'artist']
+  const availablePools = poolOrder.filter((pool) => model.anchorBuckets[pool].length > 0)
 
-  for (let index = 0; index < personalizedTargetCount; index += 1) {
-    let anchor: WeightedTag | null = null
+  while (queries.length < queryCount && availablePools.length > 0) {
+    let selectedInPass = false
 
-    for (const pool of pools) {
-      anchor =
-        weightedChoice(pool, new Set([...usedAnchors, ...recentAnchorSet])) ??
-        weightedChoice(pool, usedAnchors)
-
-      if (anchor) {
+    for (const pool of availablePools) {
+      if (queries.length >= queryCount) {
         break
       }
-    }
 
-    if (!anchor) {
-      break
-    }
+      const entries = model.anchorBuckets[pool]
+      const anchor =
+        weightedChoice(entries, new Set([...usedAnchors, ...recentAnchorSet])) ??
+        weightedChoice(entries, usedAnchors)
 
-    usedAnchors.add(anchor.tag)
-    const generalPool = model.generalTagsByAnchor[anchor.tag] ?? model.fallbackGeneralTags
-    const generalTags = maybeSelectGeneralTags(generalPool)
+      if (!anchor) {
+        continue
+      }
 
-    queries.push({
-      excludeTags: model.blockedTags,
-      includeTags: [anchor.tag, ...generalTags],
-    })
-  }
-
-  if (queries.length < queryCount) {
-    const discoveryAnchor =
-      weightedChoice(
-        model.discoveryAnchors.length > 0 ? model.discoveryAnchors : model.weightedAnchors,
-        new Set([...usedAnchors, ...recentAnchorSet]),
-      ) ??
-      weightedChoice(
-        model.discoveryAnchors.length > 0 ? model.discoveryAnchors : model.weightedAnchors,
-        usedAnchors,
-      )
-
-    if (discoveryAnchor) {
-      const discoveryGeneralPool =
-        model.generalTagsByAnchor[discoveryAnchor.tag] ?? model.fallbackGeneralTags
-      const discoveryGeneralTags =
-        Math.random() < 0.35 ? maybeSelectGeneralTags(discoveryGeneralPool).slice(0, 1) : []
-
+      usedAnchors.add(anchor.tag)
       queries.push({
         excludeTags: model.blockedTags,
-        includeTags: [discoveryAnchor.tag, ...discoveryGeneralTags],
+        includeTags: [anchor.tag],
       })
+      selectedInPass = true
+    }
+
+    if (!selectedInPass) {
+      break
     }
   }
 
@@ -505,38 +447,69 @@ export function createHomeFeedQueries(
 
 export async function fetchHomeFeedBatch(options: {
   credentials: ApiCredentials
+  excludedPostIds?: Iterable<number>
   model: HomeFeedModel
   page: number
   recentAnchors?: string[]
 }) {
-  const { credentials, model, page, recentAnchors = [] } = options
+  const { credentials, excludedPostIds = [], model, page, recentAnchors = [] } = options
   const queries = createHomeFeedQueries(model, HOME_QUERY_COUNT, recentAnchors)
 
   if (queries.length === 0) {
     return {
       anchors: [] as string[],
       hasMore: false,
+      nextPage: page,
       posts: [] as FeedItem[],
     }
   }
 
-  const batches = await Promise.all(
-    queries.map((query) =>
-      fetchPosts({
-        credentials,
-        limit: randomIntInclusive(HOME_LIMIT_MIN, HOME_LIMIT_MAX),
-        page,
-        query,
-      }),
-    ),
-  )
+  const seenIds = new Set<number>(excludedPostIds)
+  const freshPosts: FeedItem[] = []
+  let nextPage = page
+  let exhausted = false
 
-  const combinedPosts = shuffleItems(dedupePosts(batches.flat()))
+  // Skip past pages that only contain saved or already-shown posts.
+  for (
+    let scanCount = 0;
+    scanCount < HOME_BATCH_PAGE_SCAN_LIMIT && freshPosts.length < HOME_FRESH_POST_TARGET;
+    scanCount += 1
+  ) {
+    const batches = await Promise.all(
+      queries.map((query) =>
+        fetchPosts({
+          credentials,
+          limit: randomIntInclusive(HOME_LIMIT_MIN, HOME_LIMIT_MAX),
+          page: nextPage,
+          query,
+        }),
+      ),
+    )
+
+    nextPage += 1
+
+    if (!batches.some((batch) => batch.length > 0)) {
+      exhausted = true
+      break
+    }
+
+    const combinedPosts = shuffleItems(dedupePosts(batches.flat())).filter((post) => {
+      if (seenIds.has(post.id)) {
+        return false
+      }
+
+      seenIds.add(post.id)
+      return true
+    })
+
+    freshPosts.push(...combinedPosts)
+  }
 
   return {
     anchors: queries.map((query) => query.includeTags[0] ?? '').filter(Boolean),
-    hasMore: batches.some((batch) => batch.length > 0),
-    posts: combinedPosts,
+    hasMore: !exhausted,
+    nextPage,
+    posts: freshPosts,
   }
 }
 

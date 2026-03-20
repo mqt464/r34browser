@@ -10,6 +10,7 @@ import type { ApiCredentials, FeedItem, LocalLibraryItem } from '../types'
 interface HomeFeedBatch {
   anchors: string[]
   hasMore: boolean
+  nextPage: number
   posts: FeedItem[]
 }
 
@@ -27,13 +28,18 @@ function mergeUniquePosts(current: FeedItem[], incoming: FeedItem[]) {
   return merged
 }
 
+function filterExcludedPosts(posts: FeedItem[], excludedIds: Set<number>) {
+  return posts.filter((post) => !excludedIds.has(post.id))
+}
+
 export function useHomeFeed(options: {
   blockedTags: string[]
   credentials: ApiCredentials
   enabled: boolean
+  excludedPostIds: Set<number>
   savedPosts: LocalLibraryItem[]
 }) {
-  const { blockedTags, credentials, enabled, savedPosts } = options
+  const { blockedTags, credentials, enabled, excludedPostIds, savedPosts } = options
   const [model, setModel] = useState<HomeFeedModel | null>(null)
   const [posts, setPosts] = useState<FeedItem[]>([])
   const [loading, setLoading] = useState(false)
@@ -47,6 +53,7 @@ export function useHomeFeed(options: {
   const prefetchingRef = useRef(false)
   const recentAnchorsRef = useRef<string[]>([])
   const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const excludedPostIdsRef = useRef(excludedPostIds)
   const modelKey = useMemo(
     () =>
       JSON.stringify({
@@ -56,6 +63,10 @@ export function useHomeFeed(options: {
       }),
     [blockedTags, credentials.userId, savedPosts],
   )
+
+  useEffect(() => {
+    excludedPostIdsRef.current = excludedPostIds
+  }, [excludedPostIds])
 
   useEffect(() => {
     requestTokenRef.current += 1
@@ -126,6 +137,7 @@ export function useHomeFeed(options: {
       try {
         const initialBatch = await fetchHomeFeedBatch({
           credentials,
+          excludedPostIds: excludedPostIdsRef.current,
           model: activeModel,
           page: nextBatchPageRef.current,
           recentAnchors: recentAnchorsRef.current,
@@ -135,9 +147,9 @@ export function useHomeFeed(options: {
           return
         }
 
-        nextBatchPageRef.current += 1
+        nextBatchPageRef.current = initialBatch.nextPage
         recentAnchorsRef.current = initialBatch.anchors.slice(-HOME_RECENT_ANCHOR_MEMORY)
-        setPosts(initialBatch.posts)
+        setPosts(filterExcludedPosts(initialBatch.posts, excludedPostIdsRef.current))
         setHasMore(initialBatch.hasMore)
         setQueuedBatch(null)
         setError(null)
@@ -183,6 +195,10 @@ export function useHomeFeed(options: {
       try {
         const nextBatch = await fetchHomeFeedBatch({
           credentials,
+          excludedPostIds: new Set([
+            ...excludedPostIdsRef.current,
+            ...posts.map((post) => post.id),
+          ]),
           model: activeModel,
           page: nextBatchPageRef.current,
           recentAnchors: recentAnchorsRef.current,
@@ -192,7 +208,7 @@ export function useHomeFeed(options: {
           return
         }
 
-        nextBatchPageRef.current += 1
+        nextBatchPageRef.current = nextBatch.nextPage
         recentAnchorsRef.current = [
           ...recentAnchorsRef.current,
           ...nextBatch.anchors,
@@ -232,7 +248,15 @@ export function useHomeFeed(options: {
           return
         }
 
-        setPosts((current) => mergeUniquePosts(current, queuedBatch.posts))
+        setPosts((current) =>
+          mergeUniquePosts(
+            current,
+            filterExcludedPosts(
+              queuedBatch.posts,
+              new Set([...excludedPostIdsRef.current, ...current.map((post) => post.id)]),
+            ),
+          ),
+        )
         setHasMore(queuedBatch.hasMore)
         setQueuedBatch(null)
       },

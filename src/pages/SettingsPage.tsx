@@ -127,6 +127,8 @@ export function SettingsPage() {
       ? 'Saved locally. Fill both fields to verify the connection.'
       : activeValidation?.message ?? 'Saved locally. Checking credentials…'
   const statusKind = !hasCompleteCredentials ? 'info' : (activeValidation?.kind ?? 'info')
+  const formTone = !hasCompleteCredentials ? 'idle' : testing ? 'loading' : statusKind
+  const showError = statusKind === 'error' && Boolean(activeValidation?.message)
   const libraryTotal = counts.saved + counts.downloads + counts.history
 
   const behaviorOptions = [
@@ -173,7 +175,37 @@ export function SettingsPage() {
             <h2>Account</h2>
           </header>
 
-          <form className="settings-form-grid" onSubmit={(event) => event.preventDefault()}>
+          <form
+            className={`settings-form-grid settings-account-form is-${formTone}`}
+            onSubmit={(event) => event.preventDefault()}
+          >
+            <div className="settings-account-meta">
+              <div className="settings-account-copy">
+                <p className="settings-account-note muted">
+                  Find these on{' '}
+                  <a
+                    href="https://rule34.xxx/index.php?page=account&s=options"
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    rule34.xxx account options
+                  </a>{' '}
+                  and look for the API access credentials.
+                </p>
+                <p className={`settings-account-feedback is-${formTone}`}>{status}</p>
+              </div>
+              {testing ? (
+                <span
+                  aria-live="polite"
+                  aria-label="Verifying credentials"
+                  className="settings-account-spinner"
+                  role="status"
+                >
+                  <LoaderCircle aria-hidden="true" className="spinner" size={16} />
+                </span>
+              ) : null}
+            </div>
+
             <label className="settings-field">
               <span className="settings-field-label">User ID</span>
               <div className="settings-input-shell">
@@ -205,12 +237,13 @@ export function SettingsPage() {
                 />
               </div>
             </label>
-          </form>
 
-          <div className={`status-banner ${statusKind}`}>
-            {testing ? <LoaderCircle aria-hidden="true" className="spinner" size={16} /> : null}
-            <span>{status}</span>
-          </div>
+            {showError ? (
+              <div aria-live="assertive" className="settings-account-error" role="alert">
+                {activeValidation?.message}
+              </div>
+            ) : null}
+          </form>
         </section>
 
         <section className="settings-card">
@@ -221,12 +254,13 @@ export function SettingsPage() {
           <div className="settings-list">
             {EXCLUDE_FILTERS.map((filter) => {
               const enabled = preferences.excludeFilters[filter.id]
+              const filterTagPreview = filter.tags.map((tag) => `-${tag}`).join(' ')
 
               return (
                 <label className="settings-row settings-row-toggle" key={filter.id}>
                   <div className="settings-row-copy">
                     <span className="settings-row-title">{filter.label}</span>
-                    <span className="settings-row-note">{filter.description}</span>
+                    <span className="settings-filter-card mono">{filterTagPreview}</span>
                   </div>
                   <span className="settings-switch">
                     <input

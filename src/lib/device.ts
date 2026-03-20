@@ -1,7 +1,52 @@
-import { WebHaptics, type HapticInput } from 'web-haptics'
 import type { FeedItem } from '../types'
 
-const webHaptics = new WebHaptics()
+type HapticStep = {
+  delay?: number
+  duration: number
+  intensity?: number
+}
+
+type HapticPreset =
+  | 'success'
+  | 'warning'
+  | 'error'
+  | 'light'
+  | 'medium'
+  | 'heavy'
+  | 'soft'
+  | 'rigid'
+  | 'selection'
+  | 'nudge'
+  | 'buzz'
+
+type HapticInput = number | HapticPreset | number[] | HapticStep[] | { pattern: HapticStep[] }
+
+const DEFAULT_PATTERNS: Record<HapticPreset, HapticStep[]> = {
+  success: [
+    { duration: 30, intensity: 0.5 },
+    { delay: 60, duration: 40, intensity: 1 },
+  ],
+  warning: [
+    { duration: 40, intensity: 0.8 },
+    { delay: 100, duration: 40, intensity: 0.6 },
+  ],
+  error: [
+    { duration: 40, intensity: 0.9 },
+    { delay: 40, duration: 40, intensity: 0.9 },
+    { delay: 40, duration: 40, intensity: 0.9 },
+  ],
+  light: [{ duration: 15, intensity: 0.4 }],
+  medium: [{ duration: 25, intensity: 0.7 }],
+  heavy: [{ duration: 35, intensity: 1 }],
+  soft: [{ duration: 40, intensity: 0.5 }],
+  rigid: [{ duration: 10, intensity: 1 }],
+  selection: [{ duration: 8, intensity: 0.3 }],
+  nudge: [
+    { duration: 80, intensity: 0.8 },
+    { delay: 80, duration: 50, intensity: 0.3 },
+  ],
+  buzz: [{ duration: 1000, intensity: 1 }],
+}
 
 const HOLD_MENU_OPEN_HAPTIC: HapticInput = [{ duration: 8, intensity: 0.12 }]
 const HOLD_MENU_HOVER_HAPTIC: HapticInput = [{ duration: 10, intensity: 0.22 }]
@@ -21,6 +66,166 @@ const SCROLL_RESET_TRIGGER_HAPTIC: HapticInput = [
   { duration: 12, intensity: 0.2 },
 ]
 
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(Math.max(value, minimum), maximum)
+}
+
+function isFiniteDuration(value: number | undefined) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+}
+
+function normaliseHapticSteps(input: HapticInput): HapticStep[] {
+  if (typeof input === 'number') {
+    return isFiniteDuration(input) ? [{ duration: input }] : []
+  }
+
+  if (typeof input === 'string') {
+    return DEFAULT_PATTERNS[input]?.map((step) => ({ ...step })) ?? DEFAULT_PATTERNS.medium
+  }
+
+  if (Array.isArray(input)) {
+    if (input.length === 0) {
+      return []
+    }
+
+    if (typeof input[0] === 'number') {
+      const numericPattern = input as number[]
+      const steps: HapticStep[] = []
+
+      for (let index = 0; index < numericPattern.length; index += 2) {
+        const duration = numericPattern[index]
+        if (!isFiniteDuration(duration)) {
+          continue
+        }
+
+        const delay = index > 0 ? numericPattern[index - 1] : 0
+        steps.push(delay > 0 ? { delay, duration } : { duration })
+      }
+
+      return steps
+    }
+
+    return (input as HapticStep[])
+      .filter((step) => isFiniteDuration(step.duration))
+      .map((step) => ({
+        delay: step.delay && step.delay > 0 ? step.delay : undefined,
+        duration: step.duration,
+        intensity:
+          typeof step.intensity === 'number' && Number.isFinite(step.intensity)
+            ? clamp(step.intensity, 0, 1)
+            : undefined,
+      }))
+  }
+
+  return normaliseHapticSteps(input.pattern)
+}
+
+function buildVibrationPattern(steps: HapticStep[]) {
+  const pattern: number[] = []
+
+  for (const step of steps) {
+    const delay = step.delay ?? 0
+
+    if (delay > 0) {
+      if (pattern.length === 0) {
+        pattern.push(0, delay)
+      } else if (pattern.length % 2 === 0) {
+        pattern[pattern.length - 1] += delay
+      } else {
+        pattern.push(delay)
+      }
+    }
+
+    pattern.push(step.duration)
+  }
+
+  return pattern
+}
+
+function isIosTouchDevice() {
+  const platform =
+    /iPad|iPhone|iPod/i.test(navigator.userAgent) ||
+    (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
+
+  return platform && window.matchMedia('(pointer: coarse)').matches
+}
+
+class IosSwitchHaptics {
+  private elementId = `r34browser-haptic-${Math.random().toString(36).slice(2)}`
+  private label: HTMLLabelElement | null = null
+  private timeouts = new Set<number>()
+
+  cancel() {
+    for (const timeoutId of this.timeouts) {
+      window.clearTimeout(timeoutId)
+    }
+
+    this.timeouts.clear()
+  }
+
+  trigger(steps: HapticStep[]) {
+    if (steps.length === 0) {
+      return
+    }
+
+    this.cancel()
+
+    let elapsed = 0
+    for (const step of steps) {
+      elapsed += step.delay ?? 0
+      this.scheduleTick(elapsed)
+      elapsed += step.duration
+    }
+  }
+
+  private ensureElement() {
+    if (this.label?.isConnected) {
+      return
+    }
+
+    const label = document.createElement('label')
+    label.htmlFor = this.elementId
+    label.ariaHidden = 'true'
+    label.style.position = 'fixed'
+    label.style.width = '1px'
+    label.style.height = '1px'
+    label.style.overflow = 'hidden'
+    label.style.opacity = '0'
+    label.style.inset = '-100px auto auto -100px'
+
+    const input = document.createElement('input')
+    input.id = this.elementId
+    input.type = 'checkbox'
+    input.tabIndex = -1
+    input.setAttribute('switch', '')
+    label.appendChild(input)
+
+    document.body.appendChild(label)
+    this.label = label
+  }
+
+  private scheduleTick(delay: number) {
+    if (delay <= 0) {
+      this.tick()
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      this.timeouts.delete(timeoutId)
+      this.tick()
+    }, delay)
+
+    this.timeouts.add(timeoutId)
+  }
+
+  private tick() {
+    this.ensureElement()
+    this.label?.click()
+  }
+}
+
+const iosSwitchHaptics = new IosSwitchHaptics()
+
 export function isMobileDevice() {
   return (
     window.matchMedia('(max-width: 800px)').matches ||
@@ -33,7 +238,19 @@ export function triggerHaptic(enabled: boolean, pattern: HapticInput = 'light') 
     return
   }
 
-  void webHaptics.trigger(pattern)
+  const steps = normaliseHapticSteps(pattern)
+  if (steps.length === 0) {
+    return
+  }
+
+  if (typeof navigator.vibrate === 'function') {
+    navigator.vibrate(buildVibrationPattern(steps))
+    return
+  }
+
+  if (isIosTouchDevice()) {
+    iosSwitchHaptics.trigger(steps)
+  }
 }
 
 export function triggerHoldMenuOpenHaptic(enabled: boolean) {

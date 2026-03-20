@@ -586,12 +586,25 @@ video {
   position: absolute;
   inset: 0;
   border-radius: inherit;
-  background:
-    linear-gradient(110deg, rgba(255, 255, 255, 0.04) 18%, rgba(255, 255, 255, 0.12) 28%, rgba(255, 255, 255, 0.04) 38%),
-    var(--surface-muted);
-  background-size: 220% 100%;
-  animation: skeleton 1.2s linear infinite;
+  overflow: hidden;
+  background: var(--surface-muted);
   pointer-events: none;
+}
+
+.card-media-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-160%);
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.04) 30%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(255, 255, 255, 0.04) 70%,
+    transparent 100%
+  );
+  animation: skeleton-shimmer 1.25s linear infinite;
 }
 
 .card-media-asset {
@@ -1247,11 +1260,27 @@ video {
 }
 
 .feed-skeleton {
+  position: relative;
+  overflow: hidden;
   height: 18rem;
   border-radius: 1.2rem;
   background: var(--surface-muted);
-  background-size: 220% 100%;
-  animation: skeleton 1.2s linear infinite;
+}
+
+.feed-skeleton::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-160%);
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.04) 30%,
+    rgba(255, 255, 255, 0.14) 50%,
+    rgba(255, 255, 255, 0.04) 70%,
+    transparent 100%
+  );
+  animation: skeleton-shimmer 1.25s linear infinite;
 }
 
 .feed-skeleton-inline {
@@ -1302,12 +1331,12 @@ video {
   border: 0;
 }
 
-@keyframes skeleton {
+@keyframes skeleton-shimmer {
   0% {
-    background-position: 200% 0;
+    transform: translateX(-160%);
   }
   100% {
-    background-position: -20% 0;
+    transform: translateX(160%);
   }
 }
 
@@ -1341,7 +1370,8 @@ video {
 
 .settings-header {
   gap: 0.35rem;
-  max-width: 46rem;
+  width: min(100%, 46rem);
+  margin-inline: auto;
 }
 
 .settings-header h1 {
@@ -1353,7 +1383,7 @@ video {
   display: grid;
   grid-template-columns: minmax(0, 46rem);
   gap: 1rem;
-  justify-content: start;
+  justify-content: center;
 }
 
 .settings-card {
@@ -1378,6 +1408,10 @@ video {
   gap: 0.85rem;
 }
 
+.settings-account-form {
+  gap: 0.95rem;
+}
+
 .settings-field {
   display: grid;
   gap: 0.4rem;
@@ -1395,9 +1429,105 @@ video {
   align-items: center;
   min-height: 3rem;
   padding: 0 0.85rem;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(52, 60, 74, 0.72);
   border-radius: 0.85rem;
-  background: rgba(8, 10, 14, 0.38);
+  background: linear-gradient(180deg, rgba(11, 13, 18, 0.9), rgba(8, 10, 14, 0.82));
+  transition:
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.settings-input-shell:focus-within {
+  border-color: rgba(var(--accent-rgb), 0.24);
+  background: linear-gradient(180deg, rgba(14, 18, 26, 0.94), rgba(9, 12, 18, 0.88));
+  box-shadow:
+    0 0 0 1px rgba(var(--accent-rgb), 0.08) inset,
+    0 8px 20px rgba(0, 0, 0, 0.12);
+}
+
+.settings-account-form.is-loading .settings-input-shell {
+  border-color: rgba(var(--accent-rgb), 0.18);
+  background: linear-gradient(180deg, rgba(16, 23, 36, 0.9), rgba(10, 15, 25, 0.84));
+}
+
+.settings-account-form.is-success .settings-input-shell {
+  border-color: rgba(120, 217, 141, 0.18);
+  background: linear-gradient(180deg, rgba(13, 25, 18, 0.9), rgba(10, 18, 14, 0.84));
+}
+
+.settings-account-form.is-error .settings-input-shell {
+  border-color: rgba(255, 127, 127, 0.18);
+  background: linear-gradient(180deg, rgba(28, 16, 18, 0.9), rgba(19, 11, 13, 0.84));
+}
+
+.settings-account-meta {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.85rem;
+}
+
+.settings-account-copy {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.settings-account-note,
+.settings-account-feedback {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.settings-account-note a {
+  color: color-mix(in oklab, var(--text-muted) 58%, var(--text-strong));
+  text-decoration-color: rgba(255, 255, 255, 0.24);
+}
+
+.settings-account-note a:hover {
+  color: var(--text-strong);
+  text-decoration-color: currentColor;
+}
+
+.settings-account-feedback {
+  color: var(--text-muted);
+}
+
+.settings-account-feedback.is-loading {
+  color: #c9dbff;
+}
+
+.settings-account-feedback.is-success {
+  color: var(--success);
+}
+
+.settings-account-feedback.is-error {
+  color: var(--danger);
+}
+
+.settings-account-spinner {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  margin-top: 0.05rem;
+  border: 1px solid rgba(var(--accent-rgb), 0.24);
+  border-radius: 999px;
+  background: rgba(var(--accent-rgb), 0.08);
+  color: #c9dbff;
+}
+
+.settings-account-error {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid rgba(255, 127, 127, 0.22);
+  border-radius: 0.85rem;
+  background: rgba(255, 127, 127, 0.1);
+  color: var(--danger);
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .settings-list,
@@ -1447,11 +1577,29 @@ video {
   line-height: 1.4;
 }
 
+.settings-filter-card {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  padding: 0.26rem 0.42rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 0.5rem;
+  background: rgb(0, 0, 0);
+  color: var(--text-muted);
+  font-size: 0.71rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
 .settings-switch {
+  --switch-width: 2.95rem;
+  --switch-height: 1.72rem;
+  --switch-padding: 0.16rem;
+  --switch-thumb-size: calc(var(--switch-height) - (var(--switch-padding) * 2));
   position: relative;
   flex: 0 0 auto;
-  width: 2.9rem;
-  height: 1.8rem;
+  width: var(--switch-width);
+  height: var(--switch-height);
 }
 
 .settings-switch-input {
@@ -1464,36 +1612,62 @@ video {
 .settings-switch-track {
   position: absolute;
   inset: 0;
-  border: 1px solid var(--border-strong);
+  display: block;
+  border: 1px solid rgba(52, 60, 74, 0.78);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  transition: background 160ms ease, border-color 160ms ease;
+  background:
+    linear-gradient(180deg, rgba(27, 32, 42, 0.98), rgba(13, 16, 22, 0.98)),
+    rgba(10, 12, 16, 0.96);
+  box-shadow:
+    inset 0 1px 0 rgba(120, 132, 156, 0.08),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .settings-switch-thumb {
   position: absolute;
-  top: 0.18rem;
-  left: 0.18rem;
-  width: 1.32rem;
-  height: 1.32rem;
+  top: 50%;
+  left: var(--switch-padding);
+  width: var(--switch-thumb-size);
+  height: var(--switch-thumb-size);
   border-radius: 999px;
-  background: #fff;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
-  transition: transform 160ms ease;
+  border: 1px solid rgba(70, 79, 96, 0.42);
+  background: linear-gradient(180deg, #dbe2ec, #bfc9d7);
+  box-shadow:
+    0 6px 14px rgba(0, 0, 0, 0.24),
+    0 1px 0 rgba(255, 255, 255, 0.22) inset;
+  transform: translate3d(0, -50%, 0);
+  transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+  will-change: transform;
 }
 
 .settings-switch-input:checked + .settings-switch-track {
-  border-color: rgba(var(--accent-rgb), 0.35);
-  background: rgba(var(--accent-rgb), 0.75);
+  border-color: rgba(var(--accent-rgb), 0.24);
+  background:
+    linear-gradient(180deg, rgba(var(--accent-rgb), 0.7), rgba(var(--accent-rgb), 0.54)),
+    rgba(var(--accent-rgb), 0.58);
+  box-shadow:
+    inset 0 1px 0 rgba(180, 214, 255, 0.12),
+    inset 0 0 0 1px rgba(18, 26, 40, 0.08);
 }
 
 .settings-switch-input:checked + .settings-switch-track .settings-switch-thumb {
-  transform: translateX(1.08rem);
+  transform: translate3d(
+      calc(var(--switch-width) - var(--switch-thumb-size) - (var(--switch-padding) * 2)),
+      -50%,
+      0
+    );
+  box-shadow:
+    0 7px 16px rgba(0, 0, 0, 0.28),
+    0 1px 0 rgba(255, 255, 255, 0.18) inset;
 }
 
 .settings-switch-input:focus-visible + .settings-switch-track {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  border-color: rgba(var(--accent-rgb), 0.34);
+  box-shadow:
+    0 0 0 3px rgba(var(--accent-rgb), 0.14),
+    inset 0 1px 0 rgba(120, 132, 156, 0.08),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.18);
 }
 
 .settings-range-row {
@@ -1789,5 +1963,15 @@ input:focus-visible {
 
   .settings-color-control {
     width: 100%;
+  }
+
+  .settings-account-meta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settings-account-spinner {
+    margin-top: 0;
+    align-self: flex-start;
   }
 }
