@@ -291,10 +291,13 @@ function startDownload(url: string, filename: string) {
   anchor.href = url
   anchor.download = filename
   anchor.rel = 'noreferrer'
-  anchor.target = '_blank'
   document.body.appendChild(anchor)
   anchor.click()
   anchor.remove()
+}
+
+function supportsDownloadLinks() {
+  return typeof HTMLAnchorElement !== 'undefined' && 'download' in HTMLAnchorElement.prototype
 }
 
 async function shareFile(post: FeedItem) {
@@ -328,6 +331,12 @@ async function shareFile(post: FeedItem) {
 
 export async function saveMedia(post: FeedItem, preferShareOnMobile: boolean) {
   const mobile = isMobileDevice()
+  const canDirectDownload = !mobile || !preferShareOnMobile || supportsDownloadLinks()
+
+  if (canDirectDownload) {
+    startDownload(post.fileUrl, createDownloadName(post))
+    return 'downloaded'
+  }
 
   if (mobile && preferShareOnMobile) {
     try {
