@@ -329,23 +329,45 @@ async function shareFile(post: FeedItem) {
   return true
 }
 
+async function shareMediaUrl(post: FeedItem) {
+  if (typeof navigator.share !== 'function') {
+    return false
+  }
+
+  await navigator.share({
+    title: createDownloadName(post),
+    url: post.fileUrl,
+  })
+
+  return true
+}
+
 export async function saveMedia(post: FeedItem, preferShareOnMobile: boolean) {
   const mobile = isMobileDevice()
-  const canDirectDownload = !mobile || !preferShareOnMobile || supportsDownloadLinks()
+  const shouldPreferShare = mobile && preferShareOnMobile
 
-  if (canDirectDownload) {
+  if (!shouldPreferShare && supportsDownloadLinks()) {
     startDownload(post.fileUrl, createDownloadName(post))
     return 'downloaded'
   }
 
-  if (mobile && preferShareOnMobile) {
+  if (shouldPreferShare) {
     try {
       const shared = await shareFile(post)
       if (shared) {
         return 'shared'
       }
     } catch {
-      // Download fallback is intentional here.
+      // Fall through to URL share or direct download.
+    }
+
+    try {
+      const shared = await shareMediaUrl(post)
+      if (shared) {
+        return 'shared'
+      }
+    } catch {
+      // Direct download fallback is intentional here.
     }
   }
 
