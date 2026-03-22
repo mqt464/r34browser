@@ -353,16 +353,16 @@ export async function saveMedia(post: FeedItem, preferShareOnMobile: boolean) {
 
   if (shouldPreferShare) {
     try {
-      const shared = await shareFile(post)
+      const shared = await shareMediaUrl(post)
       if (shared) {
         return 'shared'
       }
     } catch {
-      // Fall through to URL share or direct download.
+      // Fall through to file share or direct download.
     }
 
     try {
-      const shared = await shareMediaUrl(post)
+      const shared = await shareFile(post)
       if (shared) {
         return 'shared'
       }
