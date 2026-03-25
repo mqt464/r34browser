@@ -4,6 +4,7 @@ import { useAppContext } from '../state/useAppContext'
 import { PostCard } from './PostCard'
 import type { FeedItem } from '../types'
 
+const EMPTY_POSTS: FeedItem[] = []
 const LONG_POST_RATIO = 1.85
 const TRUNCATED_POST_MAX_REM = 42
 const TRUNCATED_POST_MAX_VH = 0.74
@@ -73,12 +74,14 @@ function distributePosts(
 }
 
 export function FeedGrid({
+  active = true,
   posts,
   loading = false,
   loadingMore = false,
   hasMore = true,
   sentinelRef,
 }: {
+  active?: boolean
   posts: FeedItem[]
   loading?: boolean
   loadingMore?: boolean
@@ -91,8 +94,13 @@ export function FeedGrid({
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight)
   const [rootFontSize, setRootFontSize] = useState(() => getRootFontSize())
   const columns = Math.max(1, preferences.masonryColumns)
+  const layoutPosts = active ? posts : EMPTY_POSTS
 
   useEffect(() => {
+    if (!active) {
+      return
+    }
+
     const onResize = () => {
       setViewportHeight(window.innerHeight)
       setRootFontSize(getRootFontSize())
@@ -100,9 +108,13 @@ export function FeedGrid({
 
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
-  }, [])
+  }, [active])
 
   useEffect(() => {
+    if (!active) {
+      return
+    }
+
     const element = gridRef.current
     if (!element || typeof ResizeObserver === 'undefined') {
       return
@@ -119,21 +131,25 @@ export function FeedGrid({
 
     observer.observe(element)
     return () => observer.disconnect()
-  }, [columns, posts.length])
+  }, [active, columns, posts.length])
 
   const distributedPosts = useMemo(
-    () => distributePosts(posts, columns, gridWidth, viewportHeight, rootFontSize),
-    [columns, gridWidth, posts, rootFontSize, viewportHeight],
+    () => distributePosts(layoutPosts, columns, gridWidth, viewportHeight, rootFontSize),
+    [columns, gridWidth, layoutPosts, rootFontSize, viewportHeight],
   )
   const viewerIndexByPostId = useMemo(() => {
     const next = new Map<number, number>()
-    posts.forEach((post, index) => {
+    layoutPosts.forEach((post, index) => {
       next.set(post.id, index)
     })
     return next
-  }, [posts])
+  }, [layoutPosts])
 
   useEffect(() => {
+    if (!active) {
+      return
+    }
+
     posts.slice(0, 8).forEach((post) => {
       const preloadUrl = getPreloadImageUrl(post)
 
@@ -144,7 +160,11 @@ export function FeedGrid({
       const img = new Image()
       img.src = preloadUrl
     })
-  }, [posts])
+  }, [active, posts])
+
+  if (!active) {
+    return null
+  }
 
   if (loading && posts.length === 0) {
     return (

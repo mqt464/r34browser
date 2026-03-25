@@ -35,7 +35,7 @@ function readPendingQuery(state: unknown) {
   return typeof pendingQuery === 'string' ? pendingQuery : ''
 }
 
-export function SearchPage() {
+export function SearchPage({ active = true }: { active?: boolean }) {
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryText = searchParams.get('q') ?? ''
@@ -70,7 +70,10 @@ export function SearchPage() {
     query: searchQuery,
   })
 
-  const visiblePosts = filterVisiblePosts(feed.posts, hiddenIds, new Set(blockedTags))
+  const visiblePosts = useMemo(
+    () => (active ? filterVisiblePosts(feed.posts, hiddenIds, new Set(blockedTags)) : []),
+    [active, blockedTags, feed.posts, hiddenIds],
+  )
 
   return (
     <div className="page app-feed-page">
@@ -105,6 +108,7 @@ export function SearchPage() {
       ) : null}
 
       <FeedGrid
+        active={active}
         hasMore={feed.hasMore}
         loading={feed.loading}
         loadingMore={feed.loadingMore}

@@ -3,11 +3,13 @@ import { DEFAULT_EXCLUDE_FILTERS, normalizeExcludeFilters } from './preferences'
 import type { FeedSignals, LocalLibraryItem, UserPreferences } from '../types'
 
 const DB_NAME = 'r34browser'
-const DB_VERSION = 1
+const DB_VERSION = 2
 const PREFERENCES_KEY = 'r34browser.preferences'
 const FEED_SIGNALS_KEY = 'r34browser.feedSignals'
+const TIMESTAMP_INDEX = 'by-timestamp'
 
 type PostStoreName = 'saved' | 'history' | 'downloads'
+export type LibraryCursor = [number, number]
 
 const defaultPreferences: UserPreferences = {
   credentials: {
@@ -24,16 +26,21 @@ const defaultPreferences: UserPreferences = {
 
 async function getDb() {
   return openDB(DB_NAME, DB_VERSION, {
-    upgrade(database) {
-      if (!database.objectStoreNames.contains('saved')) {
-        database.createObjectStore('saved', { keyPath: 'id' })
+    upgrade(database, _oldVersion, _newVersion, transaction) {
+      const ensurePostStore = (storeName: PostStoreName) => {
+        const store = database.objectStoreNames.contains(storeName)
+          ? transaction.objectStore(storeName)
+          : database.createObjectStore(storeName, { keyPath: 'id' })
+
+        if (!store.indexNames.contains(TIMESTAMP_INDEX)) {
+          store.createIndex(TIMESTAMP_INDEX, ['timestamp', 'id'])
+        }
       }
-      if (!database.objectStoreNames.contains('history')) {
-        database.createObjectStore('history', { keyPath: 'id' })
-      }
-      if (!database.objectStoreNames.contains('downloads')) {
-        database.createObjectStore('downloads', { keyPath: 'id' })
-      }
+
+      ensurePostStore('saved')
+      ensurePostStore('history')
+      ensurePostStore('downloads')
+
       if (!database.objectStoreNames.contains('hidden')) {
         database.createObjectStore('hidden')
       }
@@ -100,6 +107,37 @@ export async function getLibraryItems(storeName: PostStoreName) {
   const db = await getDb()
   const records = (await db.getAll(storeName)) as LocalLibraryItem[]
   return sortLibrary(records)
+}
+
+export async function getLibraryItemsPage(
+  storeName: PostStoreName,
+  options: {
+    cursor?: LibraryCursor | null
+    limit?: number
+  } = {},
+) {
+  const { cursor = null, limit = 60 } = options
+  const db = await getDb()
+  const transaction = db.transaction(storeName)
+  const index = transaction.store.index(TIMESTAMP_INDEX)
+  let recordCursor = cursor
+    ? await index.openCursor(IDBKeyRange.upperBound(cursor, true), 'prev')
+    : await index.openCursor(null, 'prev')
+  const items: LocalLibraryItem[] = []
+
+  while (recordCursor && items.length < limit) {
+    items.push(recordCursor.value as LocalLibraryItem)
+    recordCursor = await recordCursor.continue()
+  }
+
+  await transaction.done
+
+  const lastItem = items.at(-1)
+  return {
+    items,
+    nextCursor:
+      recordCursor && lastItem ? ([lastItem.timestamp, lastItem.id] satisfies LibraryCursor) : null,
+  }
 }
 
 export async function saveItem(item: LocalLibraryItem) {

@@ -7,7 +7,7 @@ import { getLibraryItems } from '../lib/storage'
 import { useAppContext } from '../state/useAppContext'
 import type { LocalLibraryItem } from '../types'
 
-export function HomePage() {
+export function HomePage({ active = true }: { active?: boolean }) {
   const { preferences, hiddenIds, libraryVersion, mutedTags, savedIds } = useAppContext()
   const [savedPosts, setSavedPosts] = useState<LocalLibraryItem[]>([])
   const hasCredentials = Boolean(preferences.credentials.userId && preferences.credentials.apiKey)
@@ -42,7 +42,10 @@ export function HomePage() {
     savedPosts,
   })
 
-  const visiblePosts = filterVisiblePosts(feed.posts, hiddenIds, new Set(blockedTags))
+  const visiblePosts = useMemo(
+    () => (active ? filterVisiblePosts(feed.posts, hiddenIds, new Set(blockedTags)) : []),
+    [active, blockedTags, feed.posts, hiddenIds],
+  )
   const showHomeFeedLoading = feed.loading && feed.posts.length === 0 && !feed.planning && !feed.error
 
   return (
@@ -74,6 +77,7 @@ export function HomePage() {
       ) : null}
 
       <FeedGrid
+        active={active}
         hasMore={feed.hasMore}
         loading={feed.loading}
         loadingMore={feed.loadingMore}

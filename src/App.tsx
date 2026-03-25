@@ -430,21 +430,27 @@ function App() {
           className={`tab-panel${currentTabId === 'home' && !showingStandalonePage ? ' active' : ''}`}
           hidden={currentTabId !== 'home' || showingStandalonePage}
         >
-          <HomePage key={`home-${pageResetTokens.home}`} />
+          <HomePage
+            active={currentTabId === 'home' && !showingStandalonePage}
+            key={`home-${pageResetTokens.home}`}
+          />
         </section>
         <section
           aria-hidden={currentTabId !== 'search' || showingStandalonePage}
           className={`tab-panel${currentTabId === 'search' && !showingStandalonePage ? ' active' : ''}`}
           hidden={currentTabId !== 'search' || showingStandalonePage}
         >
-          <SearchPage key={`search-${pageResetTokens.search}`} />
+          <SearchPage
+            active={currentTabId === 'search' && !showingStandalonePage}
+            key={`search-${pageResetTokens.search}`}
+          />
         </section>
         <section
           aria-hidden={currentTabId !== 'saved' || showingStandalonePage}
           className={`tab-panel${currentTabId === 'saved' && !showingStandalonePage ? ' active' : ''}`}
           hidden={currentTabId !== 'saved' || showingStandalonePage}
         >
-          <SavedPage />
+          <SavedPage active={currentTabId === 'saved' && !showingStandalonePage} />
         </section>
         <section
           aria-hidden={currentTabId !== 'settings' || showingStandalonePage}
