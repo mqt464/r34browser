@@ -23,6 +23,7 @@ import {
   toggleMutedTagRecord,
   unsaveItem,
 } from '../lib/storage'
+import { setRealbooruProxyUrl } from '../lib/realbooruProxy'
 
 function toLibraryItem(post: FeedItem, kind: 'saved' | 'history' | 'downloaded') {
   return {
@@ -43,8 +44,8 @@ function applySignals(currentSignals: FeedSignals, tags: string[], weight: numbe
 export function AppProvider({ children }: PropsWithChildren) {
   const [preferences, setPreferences] = useState<UserPreferences>(() => loadPreferences())
   const [feedSignals, setFeedSignals] = useState<FeedSignals>(() => loadFeedSignals())
-  const [savedIds, setSavedIds] = useState<Set<number>>(new Set())
-  const [hiddenIds, setHiddenIds] = useState<Set<number>>(new Set())
+  const [savedIds, setSavedIds] = useState<Set<string>>(new Set())
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set())
   const [mutedTags, setMutedTags] = useState<Set<string>>(new Set())
   const [libraryVersion, setLibraryVersion] = useState(0)
 
@@ -68,14 +69,18 @@ export function AppProvider({ children }: PropsWithChildren) {
     )
   }, [preferences.accentColor])
 
+  useEffect(() => {
+    setRealbooruProxyUrl(preferences.realbooruProxyUrl)
+  }, [preferences.realbooruProxyUrl])
+
   const updatePreferences = useCallback((updates: PreferenceUpdates) => {
     setPreferences((current) => {
       const next = {
         ...current,
         ...updates,
-        credentials: {
-          ...current.credentials,
-          ...updates.credentials,
+        rule34Credentials: {
+          ...current.rule34Credentials,
+          ...updates.rule34Credentials,
         },
         excludeFilters: {
           ...current.excludeFilters,
@@ -99,25 +104,25 @@ export function AppProvider({ children }: PropsWithChildren) {
     async (post: FeedItem) => {
       await saveItem(toLibraryItem(post, 'saved'))
       bumpSignals(post.tags, 3)
-      setSavedIds((current) => new Set(current).add(post.id))
+      setSavedIds((current) => new Set(current).add(post.storageKey))
       setLibraryVersion((current) => current + 1)
     },
     [bumpSignals],
   )
 
-  const unsavePost = useCallback(async (postId: number) => {
-    await unsaveItem(postId)
+  const unsavePost = useCallback(async (storageKey: string) => {
+    await unsaveItem(storageKey)
     setSavedIds((current) => {
       const next = new Set(current)
-      next.delete(postId)
+      next.delete(storageKey)
       return next
     })
     setLibraryVersion((current) => current + 1)
   }, [])
 
   const hidePost = useCallback(async (post: FeedItem) => {
-    await hideItem(post.id)
-    setHiddenIds((current) => new Set(current).add(post.id))
+    await hideItem(post.storageKey)
+    setHiddenIds((current) => new Set(current).add(post.storageKey))
     setLibraryVersion((current) => current + 1)
   }, [])
 

@@ -93,8 +93,13 @@ export function FeedGrid({
   const [gridWidth, setGridWidth] = useState(() => window.innerWidth)
   const [viewportHeight, setViewportHeight] = useState(() => window.innerHeight)
   const [rootFontSize, setRootFontSize] = useState(() => getRootFontSize())
+  const [postOverrides, setPostOverrides] = useState<Record<string, FeedItem>>({})
   const columns = Math.max(1, preferences.masonryColumns)
   const layoutPosts = active ? posts : EMPTY_POSTS
+  const resolvedPosts = useMemo(
+    () => layoutPosts.map((post) => postOverrides[post.storageKey] ?? post),
+    [layoutPosts, postOverrides],
+  )
 
   useEffect(() => {
     if (!active) {
@@ -134,23 +139,23 @@ export function FeedGrid({
   }, [active, columns, posts.length])
 
   const distributedPosts = useMemo(
-    () => distributePosts(layoutPosts, columns, gridWidth, viewportHeight, rootFontSize),
-    [columns, gridWidth, layoutPosts, rootFontSize, viewportHeight],
+    () => distributePosts(resolvedPosts, columns, gridWidth, viewportHeight, rootFontSize),
+    [columns, gridWidth, resolvedPosts, rootFontSize, viewportHeight],
   )
   const viewerIndexByPostId = useMemo(() => {
-    const next = new Map<number, number>()
-    layoutPosts.forEach((post, index) => {
-      next.set(post.id, index)
+    const next = new Map<string, number>()
+    resolvedPosts.forEach((post, index) => {
+      next.set(post.storageKey, index)
     })
     return next
-  }, [layoutPosts])
+  }, [resolvedPosts])
 
   useEffect(() => {
     if (!active) {
       return
     }
 
-    posts.slice(0, 8).forEach((post) => {
+    resolvedPosts.slice(0, 8).forEach((post) => {
       const preloadUrl = getPreloadImageUrl(post)
 
       if (!preloadUrl) {
@@ -160,7 +165,7 @@ export function FeedGrid({
       const img = new Image()
       img.src = preloadUrl
     })
-  }, [active, posts])
+  }, [active, resolvedPosts])
 
   if (!active) {
     return null
@@ -199,10 +204,16 @@ export function FeedGrid({
           <div className="masonry-column" key={`column-${index}`}>
             {columnPosts.map((post) => (
               <PostCard
-                key={post.id}
+                key={post.storageKey}
+                onEnriched={(nextPost) =>
+                  setPostOverrides((current) => ({
+                    ...current,
+                    [nextPost.storageKey]: nextPost,
+                  }))
+                }
                 post={post}
-                viewerIndex={viewerIndexByPostId.get(post.id) ?? 0}
-                viewerPosts={posts}
+                viewerIndex={viewerIndexByPostId.get(post.storageKey) ?? 0}
+                viewerPosts={resolvedPosts}
               />
             ))}
             {loadingMore ? (

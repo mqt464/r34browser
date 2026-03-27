@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { fetchPosts } from '../lib/api'
-import type { ApiCredentials, FeedItem, SearchQuery } from '../types'
+import type { ApiCredentials, FeedItem, SearchQuery, SourceId } from '../types'
 
 const PAGE_SIZE = 24
 
 function mergeUniquePosts(current: FeedItem[], incoming: FeedItem[]) {
-  const seen = new Set(current.map((post) => post.id))
+  const seen = new Set(current.map((post) => post.storageKey))
   const merged = [...current]
 
   for (const post of incoming) {
-    if (!seen.has(post.id)) {
+    if (!seen.has(post.storageKey)) {
       merged.push(post)
-      seen.add(post.id)
+      seen.add(post.storageKey)
     }
   }
 
@@ -20,11 +20,11 @@ function mergeUniquePosts(current: FeedItem[], incoming: FeedItem[]) {
 
 export function filterVisiblePosts(
   posts: FeedItem[],
-  hiddenIds: Set<number>,
+  hiddenIds: Set<string>,
   mutedTags: Set<string>,
 ) {
   return posts.filter((post) => {
-    if (hiddenIds.has(post.id)) {
+    if (hiddenIds.has(post.storageKey)) {
       return false
     }
 
@@ -33,11 +33,12 @@ export function filterVisiblePosts(
 }
 
 export function usePostFeed(options: {
-  credentials: ApiCredentials
+  source: SourceId
+  credentials?: ApiCredentials
   query: SearchQuery
   enabled: boolean
 }) {
-  const { credentials, query, enabled } = options
+  const { source, credentials, query, enabled } = options
   const [posts, setPosts] = useState<FeedItem[]>([])
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -50,23 +51,25 @@ export function usePostFeed(options: {
   const requestTokenRef = useRef(0)
 
   const queryKey = JSON.stringify({
-    userId: credentials.userId,
-    apiKey: credentials.apiKey,
+    source,
+    userId: credentials?.userId ?? '',
+    apiKey: credentials?.apiKey ?? '',
     includeTags: query.includeTags,
     excludeTags: query.excludeTags,
   })
   const request = useMemo(
     () => ({
+      source,
       credentials: {
-        userId: credentials.userId,
-        apiKey: credentials.apiKey,
+        userId: credentials?.userId ?? '',
+        apiKey: credentials?.apiKey ?? '',
       },
       query: {
         includeTags: query.includeTags,
         excludeTags: query.excludeTags,
       },
     }),
-    [credentials.apiKey, credentials.userId, query],
+    [credentials?.apiKey, credentials?.userId, query, source],
   )
 
   useEffect(() => {
@@ -97,6 +100,7 @@ export function usePostFeed(options: {
       setLoadingMore(page > 0)
       try {
         const nextPosts = await fetchPosts({
+          source: request.source,
           credentials: request.credentials,
           page,
           limit: PAGE_SIZE,
@@ -108,7 +112,7 @@ export function usePostFeed(options: {
         }
 
         setPosts((current) => (page === 0 ? nextPosts : mergeUniquePosts(current, nextPosts)))
-        const nextHasMore = nextPosts.length === PAGE_SIZE
+        const nextHasMore = source === 'realbooru' ? nextPosts.length > 0 : nextPosts.length === PAGE_SIZE
         hasMoreRef.current = nextHasMore
         setHasMore(nextHasMore)
         setError(null)
@@ -116,6 +120,8 @@ export function usePostFeed(options: {
         if (cancelled || token !== requestTokenRef.current) {
           return
         }
+        hasMoreRef.current = false
+        setHasMore(false)
         setError(caughtError instanceof Error ? caughtError.message : 'Could not load posts.')
       } finally {
         if (!cancelled && token === requestTokenRef.current) {
@@ -131,7 +137,7 @@ export function usePostFeed(options: {
     return () => {
       cancelled = true
     }
-  }, [enabled, page, request])
+  }, [enabled, page, request, source])
 
   useEffect(() => {
     const node = sentinelRef.current

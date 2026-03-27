@@ -3,9 +3,11 @@ import { useLocation, useSearchParams } from 'react-router-dom'
 import { FeedGrid } from '../components/FeedGrid'
 import { SearchComposer } from '../components/SearchComposer'
 import { filterVisiblePosts, usePostFeed } from '../hooks/usePostFeed'
+import { getCredentialsForSource, hasRequiredCredentials } from '../lib/providerPreferences'
 import { getEnabledExcludeTags } from '../lib/preferences'
 import { useAppContext } from '../state/useAppContext'
-import type { SearchNavigationState } from '../types'
+import { getSourceLabel } from '../lib/sources'
+import type { SearchNavigationState, SourceId } from '../types'
 
 function parseQuery(query: string) {
   const includeTags: string[] = []
@@ -39,9 +41,16 @@ export function SearchPage({ active = true }: { active?: boolean }) {
   const location = useLocation()
   const [searchParams, setSearchParams] = useSearchParams()
   const queryText = searchParams.get('q') ?? ''
+  const sourceParam = searchParams.get('source')
   const pendingQuery = readPendingQuery(location.state).trim()
+  const pendingSource = typeof (location.state as SearchNavigationState | null)?.pendingSource === 'string'
+    ? (location.state as SearchNavigationState).pendingSource
+    : undefined
   const composerValue = pendingQuery || queryText
-  const { preferences, hiddenIds, mutedTags } = useAppContext()
+  const { preferences, hiddenIds, mutedTags, updatePreferences } = useAppContext()
+  const searchSource = (pendingSource ?? sourceParam ?? preferences.searchSource ?? 'rule34') as SourceId
+  const credentials = getCredentialsForSource(preferences, searchSource)
+  const hasAccess = hasRequiredCredentials(preferences, searchSource)
   const parsedQuery = useMemo(() => parseQuery(queryText), [queryText])
   const blockedTags = useMemo(
     () =>
@@ -63,9 +72,10 @@ export function SearchPage({ active = true }: { active?: boolean }) {
   )
 
   const feed = usePostFeed({
-    credentials: preferences.credentials,
+    source: searchSource,
+    credentials,
     enabled:
-      Boolean(preferences.credentials.userId && preferences.credentials.apiKey) &&
+      hasAccess &&
       (parsedQuery.includeTags.length > 0 || parsedQuery.excludeTags.length > 0),
     query: searchQuery,
   })
@@ -79,25 +89,35 @@ export function SearchPage({ active = true }: { active?: boolean }) {
     <div className="page app-feed-page">
       <section className="composer-strip">
         <SearchComposer
-          credentials={preferences.credentials}
+          credentials={credentials}
           hapticsEnabled={preferences.hapticsEnabled}
           initialValue={composerValue}
           key={composerValue || '__empty-search__'}
+          onSourceChange={(source) => {
+            updatePreferences({ searchSource: source })
+            const next = new URLSearchParams(searchParams)
+            next.set('source', source)
+            setSearchParams(next)
+          }}
           onSubmit={(query) => {
             const trimmed = query.trim()
+            const next = new URLSearchParams()
+            next.set('source', searchSource)
             if (!trimmed) {
-              setSearchParams({})
+              setSearchParams(next)
             } else {
-              setSearchParams({ q: trimmed })
+              next.set('q', trimmed)
+              setSearchParams(next)
             }
           }}
+          source={searchSource}
           submitting={feed.loading && feed.posts.length === 0}
         />
       </section>
 
-      {!preferences.credentials.userId || !preferences.credentials.apiKey ? (
+      {!hasAccess ? (
         <div aria-live="polite" className="status-banner error" role="status">
-          Add your Rule34 credentials in Settings to load results.
+          Add your {getSourceLabel(searchSource)} credentials in Settings to load results.
         </div>
       ) : null}
 

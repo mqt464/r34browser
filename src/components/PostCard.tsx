@@ -1,5 +1,14 @@
 import { ChevronDown, Download, Heart, MoreVertical, Tags } from 'lucide-react'
-import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
+import { enrichRealbooruPost, needsRealbooruMediaEnrichment } from '../lib/api'
 import {
   saveMedia,
   triggerHaptic,
@@ -8,7 +17,13 @@ import {
   triggerHoldMenuSelectionHaptic,
 } from '../lib/device'
 import { useScrollLock } from '../hooks/useScrollLock'
-import { getCardMediaUrl, getMediaPosterUrl } from '../lib/media'
+import {
+  getCardMediaUrl,
+  getMediaPosterUrl,
+  getVideoPlaybackCandidates,
+  getVideoPlaybackStateKey,
+} from '../lib/media'
+import { shouldAvoidInlineVideo } from '../lib/videoSupport'
 import { useAppContext } from '../state/useAppContext'
 import type { FeedItem } from '../types'
 import { HoldMenuGlass } from './HoldMenuGlass'
@@ -69,30 +84,83 @@ function renderMedia(
   autoplayEnabled: boolean,
   mediaLoaded: boolean,
   onMediaReady: () => void,
+  videoFailed: boolean,
+  onVideoFailed: () => void,
 ) {
+  const videoCandidates = post.mediaType === 'video' ? getVideoPlaybackCandidates(post) : []
+  const canRenderInlineVideo = post.mediaType !== 'video' || !shouldAvoidInlineVideo(videoCandidates)
+
+  if (post.mediaType === 'video' && (videoFailed || !canRenderInlineVideo)) {
+    if (post.source === 'realbooru') {
+      console.log(`[video-debug:card:${post.id}] render-image-fallback`, {
+        canRenderInlineVideo,
+        poster: getMediaPosterUrl(post) || post.previewUrl,
+        videoCandidates,
+        videoFailed,
+      })
+    }
+    const imageUrl = getMediaPosterUrl(post) || post.previewUrl
+
+    if (!imageUrl) {
+      return null
+    }
+
+    return (
+      <img
+        alt={post.rawTags || `Post #${post.id}`}
+        className={`card-media-asset${mediaLoaded ? ' is-loaded' : ''}`}
+        draggable={false}
+        height={post.sampleHeight || post.height || undefined}
+        loading="lazy"
+        onError={onMediaReady}
+        onLoad={onMediaReady}
+        referrerPolicy="no-referrer"
+        src={imageUrl}
+        width={post.sampleWidth || post.width || undefined}
+      />
+    )
+  }
+
   if (post.mediaType === 'video') {
     const playbackUrl = getCardMediaUrl(post)
 
     if (!playbackUrl) {
+      if (post.source === 'realbooru') {
+        console.log(`[video-debug:card:${post.id}] missing-playback-url`, {
+          post,
+          videoCandidates,
+        })
+      }
       return null
+    }
+
+    if (post.source === 'realbooru') {
+      console.log(`[video-debug:card:${post.id}] render-video`, {
+        playbackUrl,
+        videoCandidates,
+      })
     }
 
     return (
       <SyncedVideo
         autoPlay={autoplayEnabled}
+        className={`card-media-asset${mediaLoaded ? ' is-loaded' : ''}`}
         controls
         defaultMuted={autoplayEnabled}
+        debugLabel={post.source === 'realbooru' ? `card:${post.id}` : undefined}
         draggable={false}
+        fallbackSources={videoCandidates}
         height={post.sampleHeight || post.height || undefined}
-        onError={onMediaReady}
-        onLoadedMetadata={onMediaReady}
-        onLoadedData={onMediaReady}
+        key={getVideoPlaybackStateKey(post)}
+        loadStrategy="visible"
         loop
+        onError={onVideoFailed}
+        onLoadedData={onMediaReady}
+        onLoadedMetadata={onMediaReady}
         poster={getMediaPosterUrl(post) || undefined}
         playsInline
-        preload="metadata"
+        preload={autoplayEnabled ? 'metadata' : 'none'}
         src={playbackUrl}
-        className={`card-media-asset${mediaLoaded ? ' is-loaded' : ''}`}
         width={post.sampleWidth || post.width || undefined}
       />
     )
@@ -113,6 +181,7 @@ function renderMedia(
       loading="lazy"
       onError={onMediaReady}
       onLoad={onMediaReady}
+      referrerPolicy="no-referrer"
       src={imageUrl}
       width={post.sampleWidth || post.width || undefined}
     />
@@ -120,10 +189,12 @@ function renderMedia(
 }
 
 export function PostCard({
+  onEnriched,
   post,
   viewerIndex,
   viewerPosts,
 }: {
+  onEnriched?: (post: FeedItem) => void
   post: FeedItem
   viewerIndex: number
   viewerPosts: FeedItem[]
@@ -138,6 +209,7 @@ export function PostCard({
   const [holdMenu, setHoldMenu] = useState<HoldMenuState | null>(null)
   const [holdMenuClosing, setHoldMenuClosing] = useState(false)
   const [mediaLoaded, setMediaLoaded] = useState(false)
+  const [videoFailed, setVideoFailed] = useState(false)
   const holdTimerRef = useRef<number | null>(null)
   const holdMenuExitTimerRef = useRef<number | null>(null)
   const viewerSwipeHintTimerRef = useRef<number | null>(null)
@@ -146,17 +218,58 @@ export function PostCard({
   const suppressTapRef = useRef(false)
   const mediaRef = useRef<HTMLDivElement | null>(null)
   const lastTapRef = useRef(0)
-  const saved = savedIds.has(post.id)
+  const videoRecoveryAttemptedRef = useRef(false)
+  const saved = savedIds.has(post.storageKey)
   const aspectRatio = (post.sampleHeight || post.height || 1) / (post.sampleWidth || post.width || 1)
   const isLongPost = aspectRatio >= LONG_POST_RATIO
   const isVideoPost = post.mediaType === 'video'
   const viewerPost = activeViewerIndex === null ? null : viewerPosts[activeViewerIndex] ?? null
+  const videoPlaybackStateKey = useMemo(
+    () => (isVideoPost ? getVideoPlaybackStateKey(post) : ''),
+    [isVideoPost, post],
+  )
 
   useScrollLock(Boolean(holdMenu))
 
   useEffect(() => {
     setMediaLoaded(false)
-  }, [post.id, post.fileUrl, post.previewUrl, post.sampleUrl, post.mediaType])
+    setVideoFailed(false)
+    videoRecoveryAttemptedRef.current = false
+  }, [post.id, post.previewUrl, post.sampleUrl, post.mediaType, videoPlaybackStateKey])
+
+  useEffect(() => {
+    if (!needsRealbooruMediaEnrichment(post) || !mediaRef.current) {
+      return
+    }
+
+    let cancelled = false
+    const node = mediaRef.current
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries
+        if (!entry?.isIntersecting) {
+          return
+        }
+
+        observer.disconnect()
+        void enrichRealbooruPost(post)
+          .then((nextPost) => {
+            if (!cancelled) {
+              onEnriched?.(nextPost)
+            }
+          })
+          .catch(() => {})
+      },
+      { rootMargin: '220px' },
+    )
+
+    observer.observe(node)
+
+    return () => {
+      cancelled = true
+      observer.disconnect()
+    }
+  }, [onEnriched, post])
 
   useEffect(() => {
     return () => {
@@ -220,7 +333,7 @@ export function PostCard({
     source: ActionSource = 'default',
   ) => {
     if (saved && !forceLike) {
-      await unsavePost(post.id)
+      await unsavePost(post.storageKey)
       return
     }
 
@@ -273,6 +386,39 @@ export function PostCard({
     setShowViewerSwipeHint(false)
     setActiveViewerIndex(null)
   }
+
+  const handleVideoFailure = useCallback(() => {
+    if (post.source === 'realbooru') {
+      console.log(`[video-debug:card:${post.id}] handleVideoFailure`, {
+        mediaResolved: post.mediaResolved,
+        playbackUrl: getCardMediaUrl(post),
+        videoCandidates: getVideoPlaybackCandidates(post),
+      })
+    }
+
+    if (
+      post.source === 'realbooru' &&
+      post.mediaType === 'video' &&
+      post.mediaResolved !== true &&
+      !videoRecoveryAttemptedRef.current
+    ) {
+      videoRecoveryAttemptedRef.current = true
+      setMediaLoaded(false)
+      void enrichRealbooruPost(post)
+        .then((nextPost) => {
+          onEnriched?.(nextPost)
+          setVideoFailed(false)
+        })
+        .catch(() => {
+          setVideoFailed(true)
+          setMediaLoaded(true)
+        })
+      return
+    }
+
+    setVideoFailed(true)
+    setMediaLoaded(true)
+  }, [onEnriched, post])
 
   useEffect(() => {
     if (!viewerPost) {
@@ -440,7 +586,14 @@ export function PostCard({
           role="presentation"
         >
           {!mediaLoaded ? <div aria-hidden="true" className="card-media-skeleton" /> : null}
-          {renderMedia(post, preferences.autoplayEnabled, mediaLoaded, () => setMediaLoaded(true))}
+          {renderMedia(
+            post,
+            preferences.autoplayEnabled,
+            mediaLoaded,
+            () => setMediaLoaded(true),
+            videoFailed,
+            handleVideoFailure,
+          )}
           {isVideoPost ? (
             <button
               aria-label="Hold for post actions"
@@ -544,6 +697,7 @@ export function PostCard({
           autoplayEnabled={preferences.autoplayEnabled}
           canGoNext={activeViewerIndex !== null && activeViewerIndex < viewerPosts.length - 1}
           canGoPrevious={activeViewerIndex !== null && activeViewerIndex > 0}
+          key={viewerPost.storageKey}
           onClose={closeViewer}
           onNext={() =>
             setActiveViewerIndex((current) =>
@@ -559,7 +713,7 @@ export function PostCard({
           showSwipeHint={showViewerSwipeHint}
         />
       ) : null}
-      <TagSheet onClose={() => setShowTags(false)} open={showTags} tags={post.tags} />
+      <TagSheet onClose={() => setShowTags(false)} open={showTags} source={post.source} tags={post.tags} />
     </>
   )
 }

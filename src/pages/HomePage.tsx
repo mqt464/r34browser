@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { FeedGrid } from '../components/FeedGrid'
 import { useHomeFeed } from '../hooks/useHomeFeed'
 import { filterVisiblePosts } from '../hooks/usePostFeed'
+import { getCredentialsForSource } from '../lib/providerPreferences'
 import { getEnabledExcludeTags } from '../lib/preferences'
 import { getLibraryItems } from '../lib/storage'
 import { useAppContext } from '../state/useAppContext'
@@ -10,7 +11,8 @@ import type { LocalLibraryItem } from '../types'
 export function HomePage({ active = true }: { active?: boolean }) {
   const { preferences, hiddenIds, libraryVersion, mutedTags, savedIds } = useAppContext()
   const [savedPosts, setSavedPosts] = useState<LocalLibraryItem[]>([])
-  const hasCredentials = Boolean(preferences.credentials.userId && preferences.credentials.apiKey)
+  const rule34Credentials = getCredentialsForSource(preferences, 'rule34')
+  const hasRule34Credentials = Boolean(rule34Credentials?.userId && rule34Credentials.apiKey)
   const blockedTags = useMemo(
     () =>
       Array.from(
@@ -36,9 +38,8 @@ export function HomePage({ active = true }: { active?: boolean }) {
 
   const feed = useHomeFeed({
     blockedTags,
-    credentials: preferences.credentials,
-    enabled: hasCredentials,
     excludedPostIds: savedIds,
+    rule34Credentials,
     savedPosts,
   })
 
@@ -50,9 +51,9 @@ export function HomePage({ active = true }: { active?: boolean }) {
 
   return (
     <div className="page app-feed-page">
-      {!hasCredentials ? (
+      {!hasRule34Credentials ? (
         <section aria-live="polite" className="status-banner error" role="status">
-          Add your <span className="mono">user_id</span> and <span className="mono">api_key</span> in Settings.
+          Add your <span className="mono">user_id</span> and <span className="mono">api_key</span> in Settings to keep the Rule34 pool active.
         </section>
       ) : null}
 
@@ -75,6 +76,14 @@ export function HomePage({ active = true }: { active?: boolean }) {
           {feed.error}
         </section>
       ) : null}
+
+      {feed.partialErrors
+        .filter((message) => hasRule34Credentials || !message.includes('missing credentials'))
+        .map((message) => (
+        <section aria-live="polite" className="status-banner error" key={message} role="status">
+          {message}
+        </section>
+        ))}
 
       <FeedGrid
         active={active}

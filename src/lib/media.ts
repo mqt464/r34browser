@@ -1,4 +1,5 @@
 import type { FeedItem } from '../types'
+import { buildProxiedUrl, shouldProxyRealbooruMedia } from './realbooruProxy'
 
 const VIDEO_EXTENSIONS = new Set(['mp4', 'webm', 'mov'])
 const GIF_EXTENSIONS = new Set(['gif'])
@@ -17,6 +18,14 @@ function nonEmptyUrls(urls: Array<string | undefined>) {
   return urls.filter((url): url is string => Boolean(url && url.trim()))
 }
 
+function isRealbooruMediaUrl(url: string) {
+  return /https?:\/\/(?:video-cdn\.)?realbooru\.com\//i.test(url)
+}
+
+function isUnresolvedRealbooruPost(post: Pick<FeedItem, 'mediaResolved' | 'source'>) {
+  return post.source === 'realbooru' && post.mediaResolved !== true
+}
+
 export function inferMediaType(url: string, fileExt?: string): FeedItem['mediaType'] {
   const normalizedExtension = trimExtension(fileExt) || getUrlExtension(url)
 
@@ -31,7 +40,9 @@ export function inferMediaType(url: string, fileExt?: string): FeedItem['mediaTy
   return 'image'
 }
 
-export function getStillImageUrl(post: Pick<FeedItem, 'fileExt' | 'fileUrl' | 'previewUrl' | 'sampleUrl'>) {
+export function getStillImageUrl(
+  post: Pick<FeedItem, 'fileExt' | 'fileUrl' | 'previewUrl' | 'sampleUrl'>,
+) {
   const candidates = [
     { url: post.sampleUrl, fileExt: undefined },
     { url: post.previewUrl, fileExt: undefined },
@@ -46,23 +57,79 @@ export function getStillImageUrl(post: Pick<FeedItem, 'fileExt' | 'fileUrl' | 'p
   )
 }
 
-export function getVideoPlaybackUrl(
-  post: Pick<FeedItem, 'fileExt' | 'fileUrl' | 'previewUrl' | 'sampleUrl'>,
+export function getVideoPlaybackCandidates(
+  post: Pick<
+    FeedItem,
+    'fileExt' | 'fileUrl' | 'previewUrl' | 'sampleUrl' | 'source' | 'videoCandidates'
+  >,
 ) {
-  if (post.fileUrl && inferMediaType(post.fileUrl, post.fileExt) === 'video') {
-    return post.fileUrl
+  const candidateUrls = nonEmptyUrls(post.videoCandidates ?? []).filter(
+    (url) => inferMediaType(url) === 'video',
+  )
+
+  const primaryUrl =
+    post.fileUrl && inferMediaType(post.fileUrl, post.fileExt) === 'video' ? post.fileUrl : ''
+  const fallbackUrls = nonEmptyUrls([post.sampleUrl, post.previewUrl]).filter(
+    (url) => inferMediaType(url) === 'video',
+  )
+
+  const directUrls = [...new Set(nonEmptyUrls([primaryUrl, ...candidateUrls, ...fallbackUrls]))]
+
+  if (post.source !== 'realbooru') {
+    return directUrls
   }
 
-  return (
-    nonEmptyUrls([post.sampleUrl, post.previewUrl]).find(
-      (url) => inferMediaType(url) === 'video',
-    ) ?? ''
-  )
+  if (!shouldProxyRealbooruMedia()) {
+    return directUrls
+  }
+
+  const proxiedUrls = directUrls
+    .filter((url) => isRealbooruMediaUrl(url))
+    .map((url) => buildProxiedUrl(url))
+
+  return [...new Set([...directUrls, ...proxiedUrls])]
+}
+
+export function getVideoPlaybackUrl(
+  post: Pick<
+    FeedItem,
+    'fileExt' | 'fileUrl' | 'previewUrl' | 'sampleUrl' | 'source' | 'videoCandidates'
+  >,
+) {
+  const candidates = getVideoPlaybackCandidates(post)
+  if (candidates.length > 0) {
+    return candidates[0]
+  }
+
+  return ''
+}
+
+export function getVideoPlaybackStateKey(
+  post: Pick<
+    FeedItem,
+    | 'fileExt'
+    | 'fileUrl'
+    | 'previewUrl'
+    | 'sampleUrl'
+    | 'source'
+    | 'videoCandidates'
+    | 'mediaResolved'
+  >,
+) {
+  return [
+    post.mediaResolved === true ? 'resolved' : 'unresolved',
+    getVideoPlaybackUrl(post),
+    ...getVideoPlaybackCandidates(post),
+  ].join('||')
 }
 
 export function getCardMediaUrl(post: FeedItem) {
   if (post.mediaType === 'video') {
     return getVideoPlaybackUrl(post)
+  }
+
+  if (isUnresolvedRealbooruPost(post)) {
+    return nonEmptyUrls([post.previewUrl, post.sampleUrl, post.fileUrl])[0] ?? ''
   }
 
   return nonEmptyUrls([post.sampleUrl, post.fileUrl, post.previewUrl])[0] ?? ''
@@ -81,9 +148,13 @@ export function getMediaPosterUrl(post: FeedItem) {
     return ''
   }
 
-  return getStillImageUrl(post)
+  return nonEmptyUrls([post.previewUrl, getStillImageUrl(post), post.sampleUrl])[0] ?? ''
 }
 
 export function getPreloadImageUrl(post: FeedItem) {
+  if (isUnresolvedRealbooruPost(post)) {
+    return post.previewUrl || post.sampleUrl || ''
+  }
+
   return getStillImageUrl(post) || nonEmptyUrls([post.previewUrl, post.sampleUrl])[0] || ''
 }

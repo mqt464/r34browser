@@ -1,4 +1,6 @@
 import type { FeedItem } from '../types'
+import { getDetailMediaUrl } from './media'
+import { getPostPathForItem } from './routes'
 
 type HapticStep = {
   delay?: number
@@ -282,8 +284,9 @@ export function triggerScrollResetTriggerHaptic(enabled: boolean) {
 }
 
 function createDownloadName(post: FeedItem) {
-  const extension = post.fileUrl.split('.').pop()?.split('?')[0] ?? 'jpg'
-  return `r34-${post.id}.${extension}`
+  const downloadUrl = getDetailMediaUrl(post) || post.fileUrl
+  const extension = downloadUrl.split('.').pop()?.split('?')[0] ?? 'jpg'
+  return `${post.source}-${post.id}.${extension}`
 }
 
 function startDownload(url: string, filename: string) {
@@ -308,7 +311,7 @@ async function shareFile(post: FeedItem) {
     return false
   }
 
-  const response = await fetch(post.fileUrl)
+  const response = await fetch(getDetailMediaUrl(post) || post.fileUrl)
   if (!response.ok) {
     return false
   }
@@ -336,7 +339,7 @@ async function shareMediaUrl(post: FeedItem) {
 
   await navigator.share({
     title: createDownloadName(post),
-    url: post.fileUrl,
+    url: getDetailMediaUrl(post) || post.fileUrl,
   })
 
   return true
@@ -345,9 +348,10 @@ async function shareMediaUrl(post: FeedItem) {
 export async function saveMedia(post: FeedItem, preferShareOnMobile: boolean) {
   const mobile = isMobileDevice()
   const shouldPreferShare = mobile && preferShareOnMobile
+  const downloadUrl = getDetailMediaUrl(post) || post.fileUrl
 
   if (!shouldPreferShare && supportsDownloadLinks()) {
-    startDownload(post.fileUrl, createDownloadName(post))
+    startDownload(downloadUrl, createDownloadName(post))
     return 'downloaded'
   }
 
@@ -371,12 +375,12 @@ export async function saveMedia(post: FeedItem, preferShareOnMobile: boolean) {
     }
   }
 
-  startDownload(post.fileUrl, createDownloadName(post))
+  startDownload(downloadUrl, createDownloadName(post))
   return 'downloaded'
 }
 
 export async function sharePost(post: FeedItem) {
-  const shareUrl = `${window.location.origin}${window.location.pathname}#/post/${post.id}`
+  const shareUrl = `${window.location.origin}${window.location.pathname}#${getPostPathForItem(post)}`
 
   if (typeof navigator.share === 'function') {
     await navigator.share({

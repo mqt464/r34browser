@@ -98,7 +98,8 @@ export function SavedPage({ active = true }: { active?: boolean }) {
     () =>
       active
         ? items.filter(
-            (item) => !hiddenIds.has(item.id) && !item.tags.some((tag) => mutedTags.has(tag)),
+            (item) =>
+              !hiddenIds.has(item.storageKey) && !item.tags.some((tag) => mutedTags.has(tag)),
           )
         : [],
     [active, hiddenIds, items, mutedTags],

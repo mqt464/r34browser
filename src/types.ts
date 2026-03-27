@@ -1,3 +1,5 @@
+export type SourceId = 'rule34' | 'realbooru'
+
 export interface ApiCredentials {
   userId: string
   apiKey: string
@@ -8,7 +10,10 @@ export type ExcludeFilterId = 'ai' | 'scat' | 'loliShota'
 export type ExcludeFilterState = Record<ExcludeFilterId, boolean>
 
 export interface UserPreferences {
-  credentials: ApiCredentials
+  rule34Credentials: ApiCredentials
+  defaultSource: SourceId
+  searchSource: SourceId
+  realbooruProxyUrl: string
   excludeFilters: ExcludeFilterState
   masonryColumns: number
   hapticsEnabled: boolean
@@ -18,14 +23,18 @@ export interface UserPreferences {
 }
 
 export type PreferenceUpdates = Partial<
-  Omit<UserPreferences, 'credentials' | 'excludeFilters'>
+  Omit<UserPreferences, 'rule34Credentials' | 'excludeFilters'>
 > & {
-  credentials?: Partial<ApiCredentials>
+  rule34Credentials?: Partial<ApiCredentials>
   excludeFilters?: Partial<ExcludeFilterState>
 }
 
 export interface FeedItem {
   id: number
+  source: SourceId
+  storageKey: string
+  mediaResolved?: boolean
+  videoCandidates?: string[]
   tags: string[]
   rawTags: string
   previewUrl: string
@@ -39,7 +48,7 @@ export interface FeedItem {
   rating: string
   score: number
   owner: string
-  source: string
+  sourceUrl: string
   commentCount: number
   mediaType: 'image' | 'video' | 'gif'
 }
@@ -71,6 +80,7 @@ export interface SearchQuery {
 
 export interface SearchNavigationState {
   pendingQuery?: string
+  pendingSource?: SourceId
 }
 
 export interface LocalLibraryItem extends FeedItem {
@@ -83,13 +93,13 @@ export type FeedSignals = Record<string, number>
 export interface AppContextValue {
   preferences: UserPreferences
   updatePreferences: (updates: PreferenceUpdates) => void
-  savedIds: Set<number>
-  hiddenIds: Set<number>
+  savedIds: Set<string>
+  hiddenIds: Set<string>
   mutedTags: Set<string>
   feedSignals: FeedSignals
   libraryVersion: number
   savePost: (post: FeedItem) => Promise<void>
-  unsavePost: (postId: number) => Promise<void>
+  unsavePost: (storageKey: string) => Promise<void>
   hidePost: (post: FeedItem) => Promise<void>
   recordViewedPost: (post: FeedItem) => Promise<void>
   recordDownload: (post: FeedItem) => Promise<void>

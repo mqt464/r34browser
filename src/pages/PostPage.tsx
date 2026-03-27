@@ -5,12 +5,47 @@ import { FeedGrid } from '../components/FeedGrid'
 import { SyncedVideo } from '../components/SyncedVideo'
 import { fetchPosts, fetchTagMeta } from '../lib/api'
 import { saveMedia, sharePost, triggerHaptic } from '../lib/device'
-import { getDetailMediaUrl, getMediaPosterUrl } from '../lib/media'
+import {
+  getDetailMediaUrl,
+  getMediaPosterUrl,
+  getVideoPlaybackCandidates,
+  getVideoPlaybackStateKey,
+} from '../lib/media'
+import { getCredentialsForSource } from '../lib/providerPreferences'
 import { getTagTypeDetails, sortTagsByCategory } from '../lib/tagMeta'
+import { shouldAvoidInlineVideo } from '../lib/videoSupport'
 import { useAppContext } from '../state/useAppContext'
-import type { FeedItem, TagMeta } from '../types'
+import type { FeedItem, SourceId, TagMeta } from '../types'
 
 function renderPostMedia(post: FeedItem, autoplayEnabled: boolean) {
+  const videoCandidates = post.mediaType === 'video' ? getVideoPlaybackCandidates(post) : []
+
+  if (post.mediaType === 'video' && shouldAvoidInlineVideo(videoCandidates)) {
+    const imageUrl = getMediaPosterUrl(post) || post.previewUrl
+
+    if (!imageUrl) {
+      return null
+    }
+
+    return (
+      <a
+        className="media-fallback-link"
+        href={post.fileUrl || videoCandidates[0] || '#'}
+        rel="noreferrer"
+        target="_blank"
+      >
+        <img
+          alt={post.rawTags || `Post #${post.id}`}
+          height={post.height || undefined}
+          referrerPolicy="no-referrer"
+          src={imageUrl}
+          width={post.width || undefined}
+        />
+        <span>Open video</span>
+      </a>
+    )
+  }
+
   if (post.mediaType === 'video') {
     const playbackUrl = getDetailMediaUrl(post)
 
@@ -23,7 +58,10 @@ function renderPostMedia(post: FeedItem, autoplayEnabled: boolean) {
         autoPlay={autoplayEnabled}
         controls
         defaultMuted={autoplayEnabled}
+        debugLabel={post.source === 'realbooru' ? `page:${post.id}` : undefined}
+        fallbackSources={videoCandidates}
         height={post.height || undefined}
+        key={getVideoPlaybackStateKey(post)}
         loop={autoplayEnabled}
         poster={getMediaPosterUrl(post) || undefined}
         playsInline
@@ -44,6 +82,7 @@ function renderPostMedia(post: FeedItem, autoplayEnabled: boolean) {
     <img
       alt={post.rawTags || `Post #${post.id}`}
       height={post.height || undefined}
+      referrerPolicy="no-referrer"
       src={imageUrl}
       width={post.width || undefined}
     />
@@ -51,7 +90,7 @@ function renderPostMedia(post: FeedItem, autoplayEnabled: boolean) {
 }
 
 export function PostPage() {
-  const { postId } = useParams()
+  const { postId, source: sourceParam } = useParams()
   const {
     preferences,
     savedIds,
@@ -63,6 +102,8 @@ export function PostPage() {
     recordViewedPost,
     toggleMutedTag,
   } = useAppContext()
+  const source = (sourceParam ?? 'rule34') as SourceId
+  const credentials = getCredentialsForSource(preferences, source)
 
   const [post, setPost] = useState<FeedItem | null>(null)
   const [relatedPosts, setRelatedPosts] = useState<FeedItem[]>([])
@@ -83,7 +124,8 @@ export function PostPage() {
 
       try {
         const [loadedPost] = await fetchPosts({
-          credentials: preferences.credentials,
+          source,
+          credentials,
           id: Number(postId),
           limit: 1,
         })
@@ -100,7 +142,8 @@ export function PostPage() {
         await recordViewedPost(loadedPost)
 
         const related = await fetchPosts({
-          credentials: preferences.credentials,
+          source,
+          credentials,
           limit: 9,
           query: {
             includeTags: loadedPost.tags.slice(0, 2),
@@ -127,7 +170,7 @@ export function PostPage() {
     return () => {
       cancelled = true
     }
-  }, [mutedTags, postId, preferences.credentials, recordViewedPost])
+  }, [credentials, mutedTags, postId, recordViewedPost, source])
 
   useEffect(() => {
     if (!post) {
@@ -137,7 +180,7 @@ export function PostPage() {
     let cancelled = false
     setTagMeta(new Map())
 
-    void fetchTagMeta(preferences.credentials, post.tags).then((next) => {
+    void fetchTagMeta({ source: post.source, credentials, tags: post.tags }).then((next) => {
       if (!cancelled) {
         setTagMeta(next)
       }
@@ -150,7 +193,7 @@ export function PostPage() {
     return () => {
       cancelled = true
     }
-  }, [post, preferences.credentials])
+  }, [credentials, post])
 
   if (loading) {
     return <div className="status-banner">Loading post...</div>
@@ -160,12 +203,12 @@ export function PostPage() {
     return <div className="status-banner error">{error ?? 'Post unavailable.'}</div>
   }
 
-  const saved = savedIds.has(post.id)
+  const saved = savedIds.has(post.storageKey)
   const sortedTags = sortTagsByCategory(post.tags, tagMeta)
 
   const handleSave = async () => {
     if (saved) {
-      await unsavePost(post.id)
+      await unsavePost(post.storageKey)
     } else {
       triggerHaptic(preferences.hapticsEnabled)
       await savePost(post)
@@ -241,8 +284,8 @@ export function PostPage() {
                 <div className="stat-value">{post.commentCount}</div>
               </div>
             </div>
-            {post.source ? (
-              <a className="button-secondary" href={post.source} rel="noreferrer" target="_blank">
+            {post.sourceUrl ? (
+              <a className="button-secondary" href={post.sourceUrl} rel="noreferrer" target="_blank">
                 Source
               </a>
             ) : null}

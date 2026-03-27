@@ -1,28 +1,99 @@
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useScrollLock } from '../hooks/useScrollLock'
-import { getDetailMediaUrl, getMediaPosterUrl } from '../lib/media'
+import { enrichRealbooruPost, needsRealbooruMediaEnrichment } from '../lib/api'
+import {
+  getDetailMediaUrl,
+  getMediaPosterUrl,
+  getVideoPlaybackCandidates,
+  getVideoPlaybackStateKey,
+} from '../lib/media'
+import { shouldAvoidInlineVideo } from '../lib/videoSupport'
+import { SyncedVideo } from './SyncedVideo'
 import type { FeedItem } from '../types'
 
 const SWIPE_TRIGGER_PX = 80
 const SWIPE_LOCK_PX = 14
 const SWIPE_LIMIT_PX = 140
 
-function renderViewerMedia(post: FeedItem, autoplayEnabled: boolean) {
-  if (post.mediaType === 'video') {
-    const playbackUrl = getDetailMediaUrl(post)
+function ViewerMedia({
+  autoplayEnabled,
+  onVideoFailed,
+  post,
+  videoFailed,
+}: {
+  autoplayEnabled: boolean
+  onVideoFailed: () => void
+  post: FeedItem
+  videoFailed: boolean
+}) {
+  const videoCandidates = post.mediaType === 'video' ? getVideoPlaybackCandidates(post) : []
+  const videoPlaybackStateKey =
+    post.mediaType === 'video' ? getVideoPlaybackStateKey(post) : post.storageKey
 
-    if (!playbackUrl) {
+  if (post.mediaType === 'video' && (videoFailed || shouldAvoidInlineVideo(videoCandidates))) {
+    if (post.source === 'realbooru') {
+      console.log(`[video-debug:viewer:${post.id}] render-image-fallback`, {
+        poster: getMediaPosterUrl(post) || post.previewUrl,
+        videoCandidates,
+        videoFailed,
+      })
+    }
+    const imageUrl = getMediaPosterUrl(post) || post.previewUrl
+    const fallbackUrl = post.fileUrl || videoCandidates[0] || ''
+
+    if (!imageUrl) {
       return null
     }
 
     return (
-      <video
+      <button
+        aria-label="Open video in a new tab"
+        className="viewer-video-fallback"
+        onClick={() => {
+          if (fallbackUrl) {
+            window.open(fallbackUrl, '_blank', 'noopener,noreferrer')
+          }
+        }}
+        type="button"
+      >
+        <img alt={post.rawTags || `Post #${post.id}`} referrerPolicy="no-referrer" src={imageUrl} />
+        <span>Open video</span>
+      </button>
+    )
+  }
+
+  if (post.mediaType === 'video') {
+    const playbackUrl = getDetailMediaUrl(post)
+
+    if (!playbackUrl) {
+      if (post.source === 'realbooru') {
+        console.log(`[video-debug:viewer:${post.id}] missing-playback-url`, {
+          post,
+          videoCandidates,
+        })
+      }
+      return null
+    }
+
+    if (post.source === 'realbooru') {
+      console.log(`[video-debug:viewer:${post.id}] render-video`, {
+        playbackUrl,
+        videoCandidates,
+      })
+    }
+
+    return (
+      <SyncedVideo
         autoPlay={autoplayEnabled}
         controls
+        defaultMuted={false}
+        debugLabel={post.source === 'realbooru' ? `viewer:${post.id}` : undefined}
+        fallbackSources={videoCandidates}
+        key={videoPlaybackStateKey}
         loop
-        muted={false}
+        onError={onVideoFailed}
         poster={getMediaPosterUrl(post) || undefined}
         playsInline
         src={playbackUrl}
@@ -36,7 +107,7 @@ function renderViewerMedia(post: FeedItem, autoplayEnabled: boolean) {
     return null
   }
 
-  return <img alt={post.rawTags || `Post #${post.id}`} src={imageUrl} />
+  return <img alt={post.rawTags || `Post #${post.id}`} referrerPolicy="no-referrer" src={imageUrl} />
 }
 
 export function PostViewer({
@@ -66,8 +137,40 @@ export function PostViewer({
     swiping: boolean
   } | null>(null)
   const [swipeOffset, setSwipeOffset] = useState(0)
+  const [resolvedPost, setResolvedPost] = useState<FeedItem | null>(null)
+  const [failedPlaybackKey, setFailedPlaybackKey] = useState('')
+  const videoRecoveryAttemptedRef = useRef(false)
+  const displayPost = resolvedPost ?? post
+  const videoPlaybackStateKey = useMemo(
+    () => (displayPost.mediaType === 'video' ? getVideoPlaybackStateKey(displayPost) : ''),
+    [displayPost],
+  )
+  const videoFailed = failedPlaybackKey === videoPlaybackStateKey
 
   useScrollLock(true)
+
+  useEffect(() => {
+    videoRecoveryAttemptedRef.current = false
+  }, [post, videoPlaybackStateKey])
+
+  useEffect(() => {
+    if (!needsRealbooruMediaEnrichment(post)) {
+      return
+    }
+
+    let cancelled = false
+    void enrichRealbooruPost(post)
+      .then((nextPost) => {
+        if (!cancelled) {
+          setResolvedPost(nextPost)
+        }
+      })
+      .catch(() => {})
+
+    return () => {
+      cancelled = true
+    }
+  }, [post])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -89,6 +192,35 @@ export function PostViewer({
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [canGoNext, canGoPrevious, onClose, onNext, onPrevious])
+
+  const handleVideoFailure = useCallback(() => {
+    if (displayPost.source === 'realbooru') {
+      console.log(`[video-debug:viewer:${displayPost.id}] handleVideoFailure`, {
+        mediaResolved: displayPost.mediaResolved,
+        playbackUrl: getDetailMediaUrl(displayPost),
+        videoCandidates: getVideoPlaybackCandidates(displayPost),
+      })
+    }
+
+    if (
+      displayPost.source === 'realbooru' &&
+      displayPost.mediaType === 'video' &&
+      displayPost.mediaResolved !== true &&
+      !videoRecoveryAttemptedRef.current
+    ) {
+      videoRecoveryAttemptedRef.current = true
+      void enrichRealbooruPost(displayPost)
+        .then((nextPost) => {
+          setResolvedPost(nextPost)
+        })
+        .catch(() => {
+          setFailedPlaybackKey(videoPlaybackStateKey)
+        })
+      return
+    }
+
+    setFailedPlaybackKey(videoPlaybackStateKey)
+  }, [displayPost, videoPlaybackStateKey])
 
   if (typeof document === 'undefined') {
     return null
@@ -206,7 +338,12 @@ export function PostViewer({
               transform: `translate3d(${swipeOffset}px, 0, 0)`,
             }}
           >
-            {renderViewerMedia(post, autoplayEnabled)}
+            <ViewerMedia
+              autoplayEnabled={autoplayEnabled}
+              onVideoFailed={handleVideoFailure}
+              post={displayPost}
+              videoFailed={videoFailed}
+            />
           </div>
           {showSwipeHint && (canGoPrevious || canGoNext) && Math.abs(swipeOffset) < 12 ? (
             <div className="viewer-swipe-hint">

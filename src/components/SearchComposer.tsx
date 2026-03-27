@@ -2,8 +2,10 @@ import { LoaderCircle, Search } from 'lucide-react'
 import { useDeferredValue, useEffect, useRef, useState } from 'react'
 import { fetchTagMeta, fetchTagSuggestions } from '../lib/api'
 import { triggerSearchTokenSwapHaptic } from '../lib/device'
+import { getSourceLabel } from '../lib/sources'
 import { getTagTypeDetails } from '../lib/tagMeta'
-import type { ApiCredentials, TagSummary } from '../types'
+import type { ApiCredentials, SourceId, TagSummary } from '../types'
+import { SourceIcon } from './SourceMark'
 
 const SKELETON_ROWS = 5
 const TOKEN_MODE_SWAP_HOLD_MS = 340
@@ -36,15 +38,19 @@ function toggleTokenMode(token: string) {
 }
 
 export function SearchComposer({
+  source,
   credentials,
   hapticsEnabled,
   initialValue = '',
+  onSourceChange,
   onSubmit,
   submitting = false,
 }: {
-  credentials: ApiCredentials
+  source: SourceId
+  credentials?: ApiCredentials
   hapticsEnabled: boolean
   initialValue?: string
+  onSourceChange: (source: SourceId) => void
   onSubmit: (query: string) => void
   submitting?: boolean
 }) {
@@ -57,8 +63,10 @@ export function SearchComposer({
   const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0)
   const deferredDraft = useDeferredValue(draft)
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const sourceMenuRef = useRef<HTMLDivElement | null>(null)
   const tokenHoldTimerRef = useRef<number | null>(null)
   const suppressTokenClickRef = useRef<number | null>(null)
+  const [showSourceMenu, setShowSourceMenu] = useState(false)
   const token = currentToken(deferredDraft)
   const pendingToken = normaliseToken(draft)
   const canSubmit = tokens.length > 0 || Boolean(pendingToken)
@@ -150,7 +158,7 @@ export function SearchComposer({
       const tagNames = [...new Set(tokens.map((entry) => currentToken(entry).value).filter(Boolean))]
 
       try {
-        const next = await fetchTagMeta(credentials, tagNames)
+        const next = await fetchTagMeta({ source, credentials, tags: tagNames })
         if (!cancelled) {
           setTokenMeta(next)
         }
@@ -166,7 +174,7 @@ export function SearchComposer({
     return () => {
       cancelled = true
     }
-  }, [credentials, tokens])
+  }, [credentials, source, tokens])
 
   useEffect(() => {
     let cancelled = false
@@ -185,7 +193,7 @@ export function SearchComposer({
       setActiveSuggestionIndex(0)
 
       try {
-        const next = await fetchTagSuggestions(credentials, token.value)
+        const next = await fetchTagSuggestions({ source, credentials, term: token.value })
         if (cancelled) {
           return
         }
@@ -194,15 +202,20 @@ export function SearchComposer({
         setSuggestedTerm(token.value)
         setLoadingSuggestions(false)
 
-        if (!credentials.userId || !credentials.apiKey || next.length === 0) {
+        if ((!credentials?.userId || !credentials?.apiKey) && source === 'rule34') {
+          return
+        }
+
+        if (next.length === 0) {
           return
         }
 
         try {
-          const meta = await fetchTagMeta(
+          const meta = await fetchTagMeta({
+            source,
             credentials,
-            next.map((entry) => entry.name),
-          )
+            tags: next.map((entry) => entry.name),
+          })
 
           if (!cancelled) {
             setSuggestions(
@@ -237,13 +250,14 @@ export function SearchComposer({
     return () => {
       cancelled = true
     }
-  }, [credentials, token.value])
+  }, [credentials, source, token.value])
 
   useEffect(() => {
     const onPointerDown = (event: MouseEvent) => {
       if (!rootRef.current?.contains(event.target as Node)) {
         setSuggestions([])
         setSuggestedTerm('')
+        setShowSourceMenu(false)
       }
     }
 
@@ -257,7 +271,39 @@ export function SearchComposer({
     <div className="search-composer" ref={rootRef}>
       <div className="search-bar-shell">
         <div className={`search-bar${submitting ? ' is-searching' : ''}`}>
-          <Search aria-hidden="true" size={18} />
+          <div className="search-provider-shell" ref={sourceMenuRef}>
+            <button
+              aria-expanded={showSourceMenu}
+              aria-haspopup="menu"
+              aria-label={`Search provider: ${getSourceLabel(source)}`}
+              className={`search-provider-button${showSourceMenu ? ' open' : ''}`}
+              onClick={() => setShowSourceMenu((current) => !current)}
+              type="button"
+            >
+              <SourceIcon label="" size={18} source={source} />
+            </button>
+
+            {showSourceMenu ? (
+              <div className="search-provider-menu" role="menu">
+                {(['rule34', 'realbooru'] as const).map((provider) => (
+                  <button
+                    aria-pressed={provider === source}
+                    className={`search-provider-option${provider === source ? ' active' : ''}`}
+                    key={provider}
+                    onClick={() => {
+                      onSourceChange(provider)
+                      setShowSourceMenu(false)
+                    }}
+                    role="menuitemradio"
+                    type="button"
+                  >
+                    <SourceIcon label="" size={18} source={provider} />
+                    <span>{getSourceLabel(provider)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <input
             aria-label="Search tags"
             autoComplete="off"
@@ -312,12 +358,16 @@ export function SearchComposer({
           <button
             aria-busy={submitting}
             aria-label={submitting ? 'Searching' : 'Find posts'}
-            className={`button-primary search-submit${submitting ? ' is-loading' : ''}`}
+            className={`button-primary search-submit search-submit-circle${submitting ? ' is-loading' : ''}`}
             disabled={submitting || !canSubmit}
             onClick={submitSearch}
             type="button"
           >
-            {submitting ? <LoaderCircle aria-hidden="true" className="spinner" size={18} /> : 'Find'}
+            {submitting ? (
+              <LoaderCircle aria-hidden="true" className="spinner" size={18} />
+            ) : (
+              <Search aria-hidden="true" size={18} />
+            )}
           </button>
         </div>
         {showLoadingSuggestions ? (

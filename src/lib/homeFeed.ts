@@ -5,6 +5,7 @@ import type {
   FeedItem,
   LocalLibraryItem,
   SearchQuery,
+  SourceId,
   TagMeta,
 } from '../types'
 
@@ -96,13 +97,13 @@ function shuffleItems<T>(items: T[]) {
 }
 
 function dedupePosts(posts: FeedItem[]) {
-  const seen = new Set<number>()
+  const seen = new Set<string>()
   return posts.filter((post) => {
-    if (seen.has(post.id)) {
+    if (seen.has(post.storageKey)) {
       return false
     }
 
-    seen.add(post.id)
+    seen.add(post.storageKey)
     return true
   })
 }
@@ -124,7 +125,7 @@ function saveCachedTagMeta(cache: CachedTagMetaRecord) {
   localStorage.setItem(TAG_META_CACHE_KEY, JSON.stringify(cache))
 }
 
-async function resolveTagMeta(credentials: ApiCredentials, tags: string[]) {
+async function resolveTagMeta(source: SourceId, credentials: ApiCredentials | undefined, tags: string[]) {
   const now = Date.now()
   const unique = uniqueTags(tags).filter(Boolean)
   const cache = loadCachedTagMeta()
@@ -147,7 +148,7 @@ async function resolveTagMeta(credentials: ApiCredentials, tags: string[]) {
   }
 
   if (missing.length > 0) {
-    const fetched = await fetchTagMeta(credentials, missing)
+    const fetched = await fetchTagMeta({ source, credentials, tags: missing })
 
     for (const [tag, meta] of fetched.entries()) {
       cache[tag] = {
@@ -223,10 +224,11 @@ function getAnchorType(meta: TagMeta) {
 
 export async function buildHomeFeedModel(options: {
   blockedTags: string[]
-  credentials: ApiCredentials
+  credentials?: ApiCredentials
   savedPosts: LocalLibraryItem[]
+  source: SourceId
 }): Promise<HomeFeedModel> {
-  const { blockedTags, credentials, savedPosts } = options
+  const { blockedTags, credentials, savedPosts, source } = options
   const blockedSet = new Set(blockedTags)
   const candidateTags = buildCandidateTags(savedPosts, blockedSet)
 
@@ -246,7 +248,7 @@ export async function buildHomeFeedModel(options: {
     }
   }
 
-  const metaByTag = await resolveTagMeta(credentials, candidateTags)
+  const metaByTag = await resolveTagMeta(source, credentials, candidateTags)
   const candidateTagSet = new Set(candidateTags)
   const localCounts = new Map<string, number>()
   const anchorPostCounts = new Map<string, number>()
@@ -446,13 +448,14 @@ export function createHomeFeedQueries(
 }
 
 export async function fetchHomeFeedBatch(options: {
-  credentials: ApiCredentials
-  excludedPostIds?: Iterable<number>
+  credentials?: ApiCredentials
+  excludedPostIds?: Iterable<string>
   model: HomeFeedModel
   page: number
   recentAnchors?: string[]
+  source: SourceId
 }) {
-  const { credentials, excludedPostIds = [], model, page, recentAnchors = [] } = options
+  const { credentials, excludedPostIds = [], model, page, recentAnchors = [], source } = options
   const queries = createHomeFeedQueries(model, HOME_QUERY_COUNT, recentAnchors)
 
   if (queries.length === 0) {
@@ -464,7 +467,7 @@ export async function fetchHomeFeedBatch(options: {
     }
   }
 
-  const seenIds = new Set<number>(excludedPostIds)
+  const seenIds = new Set<string>(excludedPostIds)
   const freshPosts: FeedItem[] = []
   let nextPage = page
   let exhausted = false
@@ -478,6 +481,7 @@ export async function fetchHomeFeedBatch(options: {
     const batches = await Promise.all(
       queries.map((query) =>
         fetchPosts({
+          source,
           credentials,
           limit: randomIntInclusive(HOME_LIMIT_MIN, HOME_LIMIT_MAX),
           page: nextPage,
@@ -494,11 +498,11 @@ export async function fetchHomeFeedBatch(options: {
     }
 
     const combinedPosts = shuffleItems(dedupePosts(batches.flat())).filter((post) => {
-      if (seenIds.has(post.id)) {
+      if (seenIds.has(post.storageKey)) {
         return false
       }
 
-      seenIds.add(post.id)
+      seenIds.add(post.storageKey)
       return true
     })
 

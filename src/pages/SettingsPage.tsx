@@ -17,8 +17,8 @@ type ValidationState = {
 export function SettingsPage() {
   const { libraryVersion, preferences, updatePreferences, mutedTags, toggleMutedTag } =
     useAppContext()
-  const [userId, setUserId] = useState(preferences.credentials.userId)
-  const [apiKey, setApiKey] = useState(preferences.credentials.apiKey)
+  const [userId, setUserId] = useState(preferences.rule34Credentials.userId)
+  const [apiKey, setApiKey] = useState(preferences.rule34Credentials.apiKey)
   const [validationState, setValidationState] = useState<ValidationState>({
     credentialKey: '',
     kind: 'info',
@@ -56,7 +56,10 @@ export function SettingsPage() {
         testing: true,
       })
 
-      void testCredentials({ userId: trimmedUserId, apiKey: trimmedApiKey })
+      void testCredentials({
+        source: 'rule34',
+        credentials: { userId: trimmedUserId, apiKey: trimmedApiKey },
+      })
         .then(() => {
           if (validationRef.current !== validationId) {
             return
@@ -92,7 +95,7 @@ export function SettingsPage() {
     }
 
     updatePreferences({
-      credentials: {
+      rule34Credentials: {
         [field]: value,
       },
     })
@@ -244,6 +247,38 @@ export function SettingsPage() {
               </div>
             ) : null}
           </form>
+        </section>
+
+        <section className="settings-card">
+          <header className="settings-card-heading">
+            <h2>Realbooru</h2>
+          </header>
+
+          <div className="settings-form-grid">
+            <div className="settings-row-copy">
+              <span className="settings-row-title">CORS proxy URL</span>
+              <span className="settings-row-note">
+                Use a proxy prefix like <span className="mono">https://corsproxy.io/?url=</span> or a template with <span className="mono">{'{url}'}</span>. Leave it blank to fall back to the default proxy.
+              </span>
+            </div>
+
+            <label className="settings-field">
+              <span className="settings-field-label">Proxy</span>
+              <div className="settings-input-shell">
+                <input
+                  autoComplete="off"
+                  className="field"
+                  name="realbooruProxyUrl"
+                  onChange={(event) => {
+                    updatePreferences({ realbooruProxyUrl: event.target.value })
+                  }}
+                  placeholder="https://corsproxy.io/?url="
+                  spellCheck={false}
+                  value={preferences.realbooruProxyUrl}
+                />
+              </div>
+            </label>
+          </div>
         </section>
 
         <section className="settings-card">

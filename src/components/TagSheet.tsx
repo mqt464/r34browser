@@ -4,9 +4,10 @@ import { createPortal } from 'react-dom'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useScrollLock } from '../hooks/useScrollLock'
 import { fetchTagMeta } from '../lib/api'
+import { getCredentialsForSource } from '../lib/providerPreferences'
 import { getTagTypeDetails, sortTagsByCategory } from '../lib/tagMeta'
 import { useAppContext } from '../state/useAppContext'
-import type { SearchNavigationState, TagMeta } from '../types'
+import type { SearchNavigationState, SourceId, TagMeta } from '../types'
 
 function splitQueryTokens(query: string) {
   return query
@@ -27,10 +28,12 @@ function readPendingQuery(state: unknown) {
 export function TagSheet({
   open,
   onClose,
+  source,
   tags,
 }: {
   open: boolean
   onClose: () => void
+  source: SourceId
   tags: string[]
 }) {
   const { preferences } = useAppContext()
@@ -38,6 +41,7 @@ export function TagSheet({
   const navigate = useNavigate()
   const [meta, setMeta] = useState<Map<string, TagMeta>>(new Map())
   const listRef = useRef<HTMLDivElement | null>(null)
+  const credentials = getCredentialsForSource(preferences, source)
 
   useScrollLock(open, { allowScrollRef: listRef })
 
@@ -56,6 +60,7 @@ export function TagSheet({
     }, {
       state: {
         pendingQuery: queryTokens.join(' '),
+        pendingSource: source,
       } satisfies SearchNavigationState,
     })
     onClose()
@@ -67,7 +72,7 @@ export function TagSheet({
     }
 
     let cancelled = false
-    void fetchTagMeta(preferences.credentials, tags).then((next) => {
+    void fetchTagMeta({ source, credentials, tags }).then((next) => {
       if (!cancelled) {
         setMeta(next)
       }
@@ -80,7 +85,7 @@ export function TagSheet({
     return () => {
       cancelled = true
     }
-  }, [open, preferences.credentials, tags])
+  }, [credentials, open, source, tags])
 
   useEffect(() => {
     if (!open) {

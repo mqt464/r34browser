@@ -462,6 +462,7 @@ function App() {
 
         {showingStandalonePage ? (
           <Routes>
+            <Route path="/post/:source/:postId" element={<PostPage />} />
             <Route path="/post/:postId" element={<PostPage />} />
             <Route path="/tag/:tag" element={<TagRedirectPage />} />
           </Routes>
