@@ -8,6 +8,7 @@ import { saveMedia, sharePost, triggerHaptic } from '../lib/device'
 import {
   getDetailMediaUrl,
   getMediaPosterUrl,
+  hasVideoPlaybackEvidence,
   getVideoPlaybackCandidates,
   getVideoPlaybackStateKey,
 } from '../lib/media'
@@ -18,9 +19,10 @@ import { useAppContext } from '../state/useAppContext'
 import type { FeedItem, SourceId, TagMeta } from '../types'
 
 function renderPostMedia(post: FeedItem, autoplayEnabled: boolean) {
-  const videoCandidates = post.mediaType === 'video' ? getVideoPlaybackCandidates(post) : []
+  const treatsAsVideo = hasVideoPlaybackEvidence(post)
+  const videoCandidates = treatsAsVideo ? getVideoPlaybackCandidates(post) : []
 
-  if (post.mediaType === 'video' && shouldAvoidInlineVideo(videoCandidates)) {
+  if (treatsAsVideo && shouldAvoidInlineVideo(videoCandidates)) {
     const imageUrl = getMediaPosterUrl(post) || post.previewUrl
 
     if (!imageUrl) {
@@ -46,7 +48,7 @@ function renderPostMedia(post: FeedItem, autoplayEnabled: boolean) {
     )
   }
 
-  if (post.mediaType === 'video') {
+  if (treatsAsVideo) {
     const playbackUrl = getDetailMediaUrl(post)
 
     if (!playbackUrl) {

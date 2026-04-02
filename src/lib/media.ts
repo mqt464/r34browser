@@ -26,6 +26,58 @@ function isUnresolvedRealbooruPost(post: Pick<FeedItem, 'mediaResolved' | 'sourc
   return post.source === 'realbooru' && post.mediaResolved !== true
 }
 
+function hasVideoTag(value: string) {
+  return /(^|[\s,_-])(mp4|webm|video)(?=$|[\s,_-])/i.test(value)
+}
+
+function extractRealbooruAssetInfo(url: string) {
+  const match = /https?:\/\/(?:video-cdn\.)?realbooru\.com\/(?:images|samples|thumbnails)\/(..\/..\/)(?:thumbnail_|sample_)?([a-f0-9]{32})\.(?:jpg|jpeg|png|gif|webp|mp4|webm)$/i.exec(
+    url.split(/[?#]/, 1)[0] ?? '',
+  )
+
+  if (!match) {
+    return null
+  }
+
+  return {
+    md5: match[2],
+    prefix: match[1],
+  }
+}
+
+function getRealbooruCanonicalVideoUrls(urls: string[]) {
+  const derived = urls.flatMap((url) => {
+    const assetInfo = extractRealbooruAssetInfo(url)
+    if (!assetInfo) {
+      return []
+    }
+
+    return [
+      `https://realbooru.com/images/${assetInfo.prefix}${assetInfo.md5}.mp4`,
+      `https://video-cdn.realbooru.com/images/${assetInfo.prefix}${assetInfo.md5}.mp4`,
+      `https://realbooru.com/images/${assetInfo.prefix}${assetInfo.md5}.webm`,
+      `https://video-cdn.realbooru.com/images/${assetInfo.prefix}${assetInfo.md5}.webm`,
+    ]
+  })
+
+  return [...new Set(derived)]
+}
+
+export function getMediaDimensions(
+  post: Pick<FeedItem, 'sampleHeight' | 'sampleWidth' | 'height' | 'width'>,
+) {
+  const dimensions = [
+    { height: post.sampleHeight, width: post.sampleWidth },
+    { height: post.height, width: post.width },
+  ]
+
+  return (
+    dimensions.find(
+      (candidate) => candidate.width > 0 && candidate.height > 0,
+    ) ?? { height: 1, width: 1 }
+  )
+}
+
 export function inferMediaType(url: string, fileExt?: string): FeedItem['mediaType'] {
   const normalizedExtension = trimExtension(fileExt) || getUrlExtension(url)
 
@@ -40,8 +92,43 @@ export function inferMediaType(url: string, fileExt?: string): FeedItem['mediaTy
   return 'image'
 }
 
+export function hasVideoPlaybackEvidence(
+  post: Pick<FeedItem, 'fileExt' | 'mediaType' | 'rawTags' | 'videoCandidates'>,
+) {
+  if (post.mediaType === 'video') {
+    return true
+  }
+
+  if (trimExtension(post.fileExt) && inferMediaType('', post.fileExt) === 'video') {
+    return true
+  }
+
+  if ((post.videoCandidates ?? []).some((url) => inferMediaType(url) === 'video')) {
+    return true
+  }
+
+  return hasVideoTag(post.rawTags)
+}
+
+export function canRenderRealbooruMediaWithoutEnrichment(
+  post: Pick<
+    FeedItem,
+    'fileExt' | 'fileUrl' | 'mediaResolved' | 'mediaType' | 'previewUrl' | 'rawTags' | 'sampleUrl' | 'source' | 'videoCandidates'
+  >,
+) {
+  if (post.source !== 'realbooru' || post.mediaResolved === true) {
+    return false
+  }
+
+  if (hasVideoPlaybackEvidence(post)) {
+    return getVideoPlaybackCandidates(post).length > 0
+  }
+
+  return nonEmptyUrls([post.sampleUrl, post.previewUrl, post.fileUrl]).length > 0
+}
+
 export function getStillImageUrl(
-  post: Pick<FeedItem, 'fileExt' | 'fileUrl' | 'previewUrl' | 'sampleUrl'>,
+  post: Pick<FeedItem, 'fileExt' | 'fileUrl' | 'previewUrl' | 'sampleUrl' | 'source'>,
 ) {
   const candidates = [
     { url: post.sampleUrl, fileExt: undefined },
@@ -66,6 +153,12 @@ export function getVideoPlaybackCandidates(
   const candidateUrls = nonEmptyUrls(post.videoCandidates ?? []).filter(
     (url) => inferMediaType(url) === 'video',
   )
+  const derivedRealbooruUrls =
+    post.source === 'realbooru'
+      ? getRealbooruCanonicalVideoUrls(
+          nonEmptyUrls([post.fileUrl, post.sampleUrl, post.previewUrl, ...candidateUrls]),
+        )
+      : []
 
   const primaryUrl =
     post.fileUrl && inferMediaType(post.fileUrl, post.fileExt) === 'video' ? post.fileUrl : ''
@@ -73,7 +166,9 @@ export function getVideoPlaybackCandidates(
     (url) => inferMediaType(url) === 'video',
   )
 
-  const directUrls = [...new Set(nonEmptyUrls([primaryUrl, ...candidateUrls, ...fallbackUrls]))]
+  const directUrls = [
+    ...new Set(nonEmptyUrls([primaryUrl, ...candidateUrls, ...derivedRealbooruUrls, ...fallbackUrls])),
+  ]
 
   if (post.source !== 'realbooru') {
     return directUrls
@@ -124,19 +219,19 @@ export function getVideoPlaybackStateKey(
 }
 
 export function getCardMediaUrl(post: FeedItem) {
-  if (post.mediaType === 'video') {
+  if (hasVideoPlaybackEvidence(post)) {
     return getVideoPlaybackUrl(post)
   }
 
   if (isUnresolvedRealbooruPost(post)) {
-    return nonEmptyUrls([post.previewUrl, post.sampleUrl, post.fileUrl])[0] ?? ''
+    return nonEmptyUrls([post.sampleUrl, post.previewUrl, post.fileUrl])[0] ?? ''
   }
 
   return nonEmptyUrls([post.sampleUrl, post.fileUrl, post.previewUrl])[0] ?? ''
 }
 
 export function getDetailMediaUrl(post: FeedItem) {
-  if (post.mediaType === 'video') {
+  if (hasVideoPlaybackEvidence(post)) {
     return getVideoPlaybackUrl(post)
   }
 
@@ -144,11 +239,11 @@ export function getDetailMediaUrl(post: FeedItem) {
 }
 
 export function getMediaPosterUrl(post: FeedItem) {
-  if (post.mediaType !== 'video') {
+  if (!hasVideoPlaybackEvidence(post)) {
     return ''
   }
 
-  return nonEmptyUrls([post.previewUrl, getStillImageUrl(post), post.sampleUrl])[0] ?? ''
+  return nonEmptyUrls([getStillImageUrl(post), post.previewUrl, post.sampleUrl])[0] ?? ''
 }
 
 export function getPreloadImageUrl(post: FeedItem) {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type VideoHTMLAttributes } from 'react'
+import { getRealbooruProxyUrl } from '../lib/realbooruProxy'
 import { bindSyncedVideoAudio } from '../lib/videoAudio'
 import { sortVideoUrlsBySupport } from '../lib/videoSupport'
 
@@ -19,8 +20,8 @@ type PlaybackAttempt = {
 const VIEWPORT_PLAYBACK_THRESHOLD = 0.35
 const VISIBLE_LOAD_ROOT_MARGIN = '0px'
 const VISIBLE_LOAD_THRESHOLD = 0.45
-const MAX_CONCURRENT_VISIBLE_LOADS = 2
-const VIDEO_LOAD_TIMEOUT_MS = 12000
+const MAX_CONCURRENT_VISIBLE_LOADS = 1
+const VIDEO_LOAD_TIMEOUT_MS = 18000
 const visibleLoadOwners = new Set<number>()
 const visibleLoadQueue = new Map<number, () => void>()
 let nextVisibleLoadOwnerId = 1
@@ -69,6 +70,20 @@ function prefersRelaxedReferrer(url: string) {
   return /https?:\/\/(?:video-cdn\.)?realbooru\.com\//i.test(url)
 }
 
+function isProxyWrappedVideoUrl(url: string) {
+  const proxyUrl = getRealbooruProxyUrl().trim()
+  if (!proxyUrl) {
+    return false
+  }
+
+  if (proxyUrl.includes('{url}')) {
+    const prefix = proxyUrl.slice(0, proxyUrl.indexOf('{url}'))
+    return prefix ? url.startsWith(prefix) : false
+  }
+
+  return url.startsWith(proxyUrl)
+}
+
 function logVideoDebug(debugLabel: string | undefined, stage: string, details?: Record<string, unknown>) {
   if (!debugLabel) {
     return
@@ -106,7 +121,9 @@ export function SyncedVideo({
   const attempts = useMemo<PlaybackAttempt[]>(
     () =>
       sources.flatMap((source) =>
-        prefersRelaxedReferrer(source)
+        isProxyWrappedVideoUrl(source)
+          ? [{ referrerPolicy: 'no-referrer' as const, src: source }]
+          : prefersRelaxedReferrer(source)
           ? [
               { referrerPolicy: 'origin-when-cross-origin' as const, src: source },
               { referrerPolicy: 'no-referrer' as const, src: source },

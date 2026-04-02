@@ -1,17 +1,23 @@
 import type { ApiCredentials, FeedItem, SearchQuery, SourceId, TagSummary } from '../types'
 import { createStorageKey } from './sources'
-import { inferMediaType } from './media'
+import { getVideoPlaybackCandidates, inferMediaType } from './media'
 import { buildProxiedUrl } from './realbooruProxy'
 import { normalizeTagType } from './tagMeta'
 
 const RULE34_API_ENDPOINT = 'https://api.rule34.xxx/index.php'
 const REALBOORU_ORIGIN = 'https://realbooru.com'
 const REALBOORU_PROXY_COOLDOWN_MS = 10_000
+const REALBOORU_DETAIL_CACHE_PREFIX = 'realbooru:detail:'
+const MAX_CONCURRENT_REALBOORU_REQUESTS = 2
+const REALBOORU_VIDEO_PROBE_TIMEOUT_MS = 5000
 
 let realbooruProxyUnavailableUntil = 0
 let realbooruProxyUnavailableMessage: string | null = null
 const realbooruDetailCache = new Map<number, FeedItem>()
 const realbooruDetailPromises = new Map<number, Promise<FeedItem>>()
+const realbooruRequestQueue: Array<() => void> = []
+let activeRealbooruRequests = 0
+const realbooruVideoProbePromises = new Map<number, Promise<FeedItem | null>>()
 
 type ProviderOptions = {
   source: SourceId
@@ -302,6 +308,58 @@ function createRealbooruProxyError() {
   )
 }
 
+function shouldCacheRealbooruDetail(targetUrl: string) {
+  return targetUrl.startsWith(`${REALBOORU_ORIGIN}/index.php?page=post&s=view&id=`)
+}
+
+function readCachedRealbooruDetail(targetUrl: string) {
+  if (typeof sessionStorage === 'undefined' || !shouldCacheRealbooruDetail(targetUrl)) {
+    return null
+  }
+
+  try {
+    return sessionStorage.getItem(`${REALBOORU_DETAIL_CACHE_PREFIX}${targetUrl}`)
+  } catch {
+    return null
+  }
+}
+
+function writeCachedRealbooruDetail(targetUrl: string, html: string) {
+  if (typeof sessionStorage === 'undefined' || !shouldCacheRealbooruDetail(targetUrl)) {
+    return
+  }
+
+  try {
+    sessionStorage.setItem(`${REALBOORU_DETAIL_CACHE_PREFIX}${targetUrl}`, html)
+  } catch {
+    // Ignore storage quota errors and continue with in-memory caching only.
+  }
+}
+
+async function withRealbooruRequestSlot<T>(task: () => Promise<T>): Promise<T> {
+  await new Promise<void>((resolve) => {
+    const startTask = () => {
+      activeRealbooruRequests += 1
+      resolve()
+    }
+
+    if (activeRealbooruRequests < MAX_CONCURRENT_REALBOORU_REQUESTS) {
+      startTask()
+      return
+    }
+
+    realbooruRequestQueue.push(startTask)
+  })
+
+  try {
+    return await task()
+  } finally {
+    activeRealbooruRequests = Math.max(0, activeRealbooruRequests - 1)
+    const nextTask = realbooruRequestQueue.shift()
+    nextTask?.()
+  }
+}
+
 function toAbsoluteUrl(url: string) {
   if (!url) {
     return ''
@@ -336,6 +394,42 @@ function normalizeRealbooruAssetUrl(url: string) {
   return normalizeAbsoluteUrl(toAbsoluteUrl(url))
 }
 
+function parseRealbooruDimension(value: string | null | undefined) {
+  if (!value) {
+    return 0
+  }
+
+  const directValue = toNumber(value)
+  if (directValue > 0) {
+    return directValue
+  }
+
+  const match = value.match(/(\d+(?:\.\d+)?)/)
+  return match ? toNumber(match[1]) : 0
+}
+
+function getRealbooruElementDimension(node: Element | null, dimension: 'height' | 'width') {
+  if (!node) {
+    return 0
+  }
+
+  const attributeValue = parseRealbooruDimension(node.getAttribute(dimension))
+  if (attributeValue > 0) {
+    return attributeValue
+  }
+
+  const dataValue = parseRealbooruDimension(node.getAttribute(`data-${dimension}`))
+  if (dataValue > 0) {
+    return dataValue
+  }
+
+  const styleMatch = node
+    .getAttribute('style')
+    ?.match(new RegExp(`${dimension}\\s*:\\s*(\\d+(?:\\.\\d+)?)px`, 'i'))
+
+  return styleMatch?.[1] ? toNumber(styleMatch[1]) : 0
+}
+
 function normalizeRealbooruCsvTags(value: string) {
   return value
     .split(',')
@@ -357,7 +451,7 @@ function mapRealbooruThumbToSample(url: string) {
 }
 
 function extractRealbooruAssetInfo(url: string) {
-  const match = /\/(?:images|samples|thumbnails)\/(..\/..\/)(?:thumbnail_|sample_)?([a-f0-9]{32})\.(?:jpg|jpeg|png|gif|webp)$/i.exec(
+  const match = /https?:\/\/(?:video-cdn\.)?realbooru\.com\/(?:images|samples|thumbnails)\/(..\/..\/)(?:thumbnail_|sample_)?([a-f0-9]{32})\.(?:jpg|jpeg|png|gif|webp|mp4|webm)$/i.exec(
     url.split(/[?#]/, 1)[0] ?? '',
   )
 
@@ -379,8 +473,66 @@ function createRealbooruVideoCandidates(url: string) {
 
   return [
     `${REALBOORU_ORIGIN}/images/${assetInfo.prefix}${assetInfo.md5}.mp4`,
+    `https://video-cdn.realbooru.com/images/${assetInfo.prefix}${assetInfo.md5}.mp4`,
     `${REALBOORU_ORIGIN}/images/${assetInfo.prefix}${assetInfo.md5}.webm`,
+    `https://video-cdn.realbooru.com/images/${assetInfo.prefix}${assetInfo.md5}.webm`,
   ]
+}
+
+function looksLikeRealbooruVideo(value: string) {
+  return /(^|\s)(mp4|webm|video)(?=$|\s)/i.test(value)
+}
+
+function prioritizeRealbooruStillUrls(urls: string[]) {
+  const ordered = [...new Set(urls.filter(Boolean))]
+  const nonThumb = ordered.filter((url) => !/\/thumbnail_/i.test(url))
+  const candidates = nonThumb.length > 0 ? nonThumb : ordered
+  const extensionOrder = ['gif', 'png', 'jpg', 'jpeg', 'webp']
+
+  return candidates.sort((left, right) => {
+    const leftExt = left.split('.').pop()?.split('?')[0]?.toLowerCase() ?? ''
+    const rightExt = right.split('.').pop()?.split('?')[0]?.toLowerCase() ?? ''
+    const leftRank = extensionOrder.indexOf(leftExt)
+    const rightRank = extensionOrder.indexOf(rightExt)
+    const normalizedLeftRank = leftRank === -1 ? extensionOrder.length : leftRank
+    const normalizedRightRank = rightRank === -1 ? extensionOrder.length : rightRank
+    return normalizedLeftRank - normalizedRightRank
+  })
+}
+
+function collectRealbooruVideoUrls(html: string) {
+  return [...html.matchAll(/https?:\/\/(?:video-cdn\.)?realbooru\.com\/(?:images|videos)\/[^"'<>\s]+?\.(?:mp4|webm)/gi)]
+    .map((match) => normalizeRealbooruAssetUrl(match[0] ?? ''))
+    .filter(Boolean)
+}
+
+function collectRealbooruStillImageUrls(document: Document, html: string, fallbackUrls: string[]) {
+  const regexUrls = [...html.matchAll(/https?:\/\/realbooru\.com\/images\/[^"'<>\s]+?\.(?:jpg|jpeg|png|gif|webp)/gi)]
+    .map((match) => normalizeRealbooruAssetUrl(match[0] ?? ''))
+    .filter(Boolean)
+  const domUrls = [
+    document.querySelector<HTMLImageElement>('#image')?.getAttribute('src')?.trim() ?? '',
+    ...queryAll<HTMLAnchorElement>(document, 'a[href]')
+      .filter((node) => node.textContent?.trim() === 'Original')
+      .map((node) => node.getAttribute('href')?.trim() ?? ''),
+  ]
+    .map((url) => normalizeRealbooruAssetUrl(url))
+    .filter((url) => Boolean(url) && inferMediaType(url) !== 'video')
+  const imageUrls = [...regexUrls, ...domUrls, ...fallbackUrls]
+    .map((url) => normalizeRealbooruAssetUrl(url))
+    .filter((url) => {
+      if (!url || inferMediaType(url) === 'video') {
+        return false
+      }
+
+      return /\/images\//i.test(url)
+    })
+
+  return prioritizeRealbooruStillUrls(imageUrls)
+}
+
+function collectRealbooruDerivedVideoCandidates(urls: string[]) {
+  return [...new Set(urls.flatMap((url) => createRealbooruVideoCandidates(url)).filter(Boolean))]
 }
 
 function extractRealbooruOriginalHref(document: Document, html: string) {
@@ -429,15 +581,17 @@ function parseRealbooruListPosts(document: Document, limit: number) {
     }
 
     const previewUrl = normalizeRealbooruAssetUrl(image.getAttribute('src')?.trim() ?? '')
+    const previewWidth = getRealbooruElementDimension(image, 'width')
+    const previewHeight = getRealbooruElementDimension(image, 'height')
     const sampleUrl = normalizeRealbooruAssetUrl(mapRealbooruThumbToSample(previewUrl))
     const rawTags = normalizeRealbooruCsvTags(image.getAttribute('title')?.trim() ?? '')
     const tags = rawTags.split(/\s+/).filter(Boolean)
-    const videoHint = [image.getAttribute('style'), image.getAttribute('title')]
+    const videoHint = [image.getAttribute('style'), image.getAttribute('title'), rawTags]
       .filter(Boolean)
       .join(' ')
       .toLowerCase()
     const videoCandidates =
-      videoHint.includes('#0000ff') || /(video|webm|mp4)/.test(videoHint)
+      videoHint.includes('#0000ff') || looksLikeRealbooruVideo(videoHint)
         ? createRealbooruVideoCandidates(previewUrl)
         : []
     const fileUrl = videoCandidates[0] ?? sampleUrl ?? previewUrl
@@ -450,7 +604,7 @@ function parseRealbooruListPosts(document: Document, limit: number) {
         commentCount: 0,
         fileExt,
         fileUrl,
-        height: 0,
+        height: previewHeight,
         id,
         mediaResolved: false,
         mediaType:
@@ -459,15 +613,15 @@ function parseRealbooruListPosts(document: Document, limit: number) {
         previewUrl,
         rating: 'adult',
         rawTags,
-        sampleHeight: 0,
+        sampleHeight: previewHeight,
         sampleUrl,
-        sampleWidth: 0,
+        sampleWidth: previewWidth,
         score: parseRealbooruScore(document, id),
         source: 'realbooru',
         sourceUrl: '',
         tags,
         videoCandidates: videoCandidates.length > 0 ? videoCandidates : undefined,
-        width: 0,
+        width: previewWidth,
       }),
     )
 
@@ -480,34 +634,43 @@ function parseRealbooruListPosts(document: Document, limit: number) {
 }
 
 async function fetchRealbooruResource(targetUrl: string) {
+  const cachedDetail = readCachedRealbooruDetail(targetUrl)
+  if (cachedDetail) {
+    return cachedDetail
+  }
+
   if (realbooruProxyUnavailableUntil > Date.now()) {
     throw createRealbooruProxyError()
   }
 
-  let response: Response
-  try {
-    response = await fetch(buildProxiedUrl(targetUrl))
-  } catch {
-    realbooruProxyUnavailableUntil = Date.now() + REALBOORU_PROXY_COOLDOWN_MS
-    realbooruProxyUnavailableMessage =
-      'Realbooru proxy is unavailable. Update the Realbooru proxy URL in Settings.'
-    throw createRealbooruProxyError()
-  }
-
-  if (!response.ok) {
-    const message = `Realbooru proxy request failed (${response.status})`
-    if (response.status >= 500) {
+  return withRealbooruRequestSlot(async () => {
+    let response: Response
+    try {
+      response = await fetch(buildProxiedUrl(targetUrl))
+    } catch {
       realbooruProxyUnavailableUntil = Date.now() + REALBOORU_PROXY_COOLDOWN_MS
-      realbooruProxyUnavailableMessage = message
+      realbooruProxyUnavailableMessage =
+        'Realbooru proxy is unavailable. Update the Realbooru proxy URL in Settings.'
+      throw createRealbooruProxyError()
     }
 
-    throw new Error(message)
-  }
+    if (!response.ok) {
+      const message = `Realbooru proxy request failed (${response.status})`
+      if (response.status >= 500 || response.status === 429) {
+        realbooruProxyUnavailableUntil = Date.now() + REALBOORU_PROXY_COOLDOWN_MS
+        realbooruProxyUnavailableMessage = message
+      }
 
-  realbooruProxyUnavailableUntil = 0
-  realbooruProxyUnavailableMessage = null
+      throw new Error(message)
+    }
 
-  return response.text()
+    realbooruProxyUnavailableUntil = 0
+    realbooruProxyUnavailableMessage = null
+
+    const text = await response.text()
+    writeCachedRealbooruDetail(targetUrl, text)
+    return text
+  })
 }
 
 function parseRealbooruScore(document: Document, postId: number) {
@@ -543,57 +706,119 @@ function parseRealbooruTags(document: Document, html: string) {
   }
 }
 
-function parseRealbooruMedia(document: Document, html: string) {
+function parseRealbooruMedia(document: Document, html: string, rawTags: string) {
+  const imageNode = document.querySelector<HTMLImageElement>('#image')
   const image =
-    document.querySelector<HTMLImageElement>('#image')?.getAttribute('src')?.trim() ??
+    imageNode?.getAttribute('src')?.trim() ??
     html.match(/id="image"[^>]*src="([^"]+)"/i)?.[1]?.trim() ??
     ''
   const originalHref = extractRealbooruOriginalHref(document, html)
-
-  if (image) {
-    const displayUrl = normalizeRealbooruAssetUrl(image)
-    const originalUrl = normalizeRealbooruAssetUrl(originalHref)
-    const fileUrl = originalUrl || displayUrl
-    return {
-      fileExt: fileUrl.split('.').pop()?.split('?')[0]?.toLowerCase() ?? '',
-      fileUrl,
-      height: 0,
-      mediaType: inferMediaType(fileUrl),
-      previewUrl: displayUrl,
-      sampleHeight: 0,
-      sampleUrl: displayUrl,
-      sampleWidth: 0,
-      videoCandidates: undefined,
-      width: 0,
-    }
-  }
-
+  const displayUrl = normalizeRealbooruAssetUrl(image)
+  const originalUrl = normalizeRealbooruAssetUrl(originalHref)
+  const videoNode = document.querySelector<HTMLVideoElement>('video')
+  const posterUrl = normalizeRealbooruAssetUrl(
+    videoNode?.getAttribute('poster')?.trim() ??
+      html.match(/<video[^>]+poster="([^"]+)"/i)?.[1]?.trim() ??
+      '',
+  )
+  const videoHint = [
+    rawTags,
+    imageNode?.getAttribute('title') ?? '',
+    imageNode?.getAttribute('style') ?? '',
+    originalUrl,
+    displayUrl,
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
   const sourceMatches = [...html.matchAll(/<source[^>]+src="([^"]+)"/gi)]
     .map((match) => normalizeRealbooruAssetUrl(match[1] ?? ''))
     .filter(Boolean)
-  const sources = queryAll<HTMLSourceElement>(document, 'video source')
+  const declaredVideoSources = queryAll<HTMLSourceElement>(document, 'video source')
     .map((node) => normalizeRealbooruAssetUrl(node.getAttribute('src')?.trim() ?? ''))
     .concat(sourceMatches)
+    .concat(collectRealbooruVideoUrls(html))
     .filter(Boolean)
-  const sortedSources = [...new Set(sources)].sort((left, right) => {
+  const derivedVideoSources = collectRealbooruDerivedVideoCandidates([
+    posterUrl,
+    displayUrl,
+    originalUrl,
+  ])
+  const originalVideoUrl = inferMediaType(originalUrl) === 'video' ? originalUrl : ''
+  const sortedSources = [
+    ...new Set([...declaredVideoSources, originalVideoUrl, ...derivedVideoSources].filter(Boolean)),
+  ].sort((left, right) => {
     const leftMp4 = left.toLowerCase().includes('.mp4') ? 1 : 0
     const rightMp4 = right.toLowerCase().includes('.mp4') ? 1 : 0
     return rightMp4 - leftMp4
   })
-  const fileUrl =
-    sortedSources[0] ?? (normalizeRealbooruAssetUrl(originalHref) || undefined) ?? ''
+  const fullImageUrls = collectRealbooruStillImageUrls(document, html, [originalUrl])
+  const hasExplicitVideoEvidence =
+    looksLikeRealbooruVideo(videoHint) ||
+    inferMediaType(originalUrl) === 'video' ||
+    declaredVideoSources.length > 0
+  const prefersVideo =
+    sortedSources.length > 0 &&
+    (hasExplicitVideoEvidence || (fullImageUrls.length === 0 && !displayUrl && !originalUrl))
+
+  if (prefersVideo) {
+    const fileUrl = sortedSources[0] ?? ''
+    const width =
+      getRealbooruElementDimension(videoNode, 'width') ||
+      getRealbooruElementDimension(imageNode, 'width')
+    const height =
+      getRealbooruElementDimension(videoNode, 'height') ||
+      getRealbooruElementDimension(imageNode, 'height')
+    const previewUrl = posterUrl || displayUrl || fileUrl
+
+    return {
+      fileExt: fileUrl.split('.').pop()?.split('?')[0]?.toLowerCase() ?? '',
+      fileUrl,
+      height,
+      mediaType: fileUrl ? 'video' : inferMediaType(previewUrl),
+      previewUrl,
+      sampleHeight: height,
+      sampleUrl: previewUrl,
+      sampleWidth: width,
+      videoCandidates: sortedSources.length > 0 ? sortedSources : undefined,
+      width,
+    }
+  }
+
+  if (fullImageUrls.length > 0 || displayUrl) {
+    const fileUrl = fullImageUrls[0] || originalUrl || displayUrl
+    const width = getRealbooruElementDimension(imageNode, 'width')
+    const height = getRealbooruElementDimension(imageNode, 'height')
+
+    return {
+      fileExt: fileUrl.split('.').pop()?.split('?')[0]?.toLowerCase() ?? '',
+      fileUrl,
+      height,
+      mediaType: inferMediaType(fileUrl),
+      previewUrl: displayUrl || fileUrl,
+      sampleHeight: height,
+      sampleUrl: displayUrl || fileUrl,
+      sampleWidth: width,
+      videoCandidates: undefined,
+      width,
+    }
+  }
+
+  const fallbackUrl = originalUrl || displayUrl || sortedSources[0] || ''
+  const width = getRealbooruElementDimension(imageNode, 'width')
+  const height = getRealbooruElementDimension(imageNode, 'height')
 
   return {
-    fileExt: fileUrl.split('.').pop()?.split('?')[0]?.toLowerCase() ?? '',
-    fileUrl,
-    height: 0,
-    mediaType: inferMediaType(fileUrl),
-    previewUrl: fileUrl,
-    sampleHeight: 0,
-    sampleUrl: fileUrl,
-    sampleWidth: 0,
+    fileExt: fallbackUrl.split('.').pop()?.split('?')[0]?.toLowerCase() ?? '',
+    fileUrl: fallbackUrl,
+    height,
+    mediaType: inferMediaType(fallbackUrl),
+    previewUrl: displayUrl || fallbackUrl,
+    sampleHeight: height,
+    sampleUrl: displayUrl || fallbackUrl,
+    sampleWidth: width,
     videoCandidates: sortedSources.length > 0 ? sortedSources : undefined,
-    width: 0,
+    width,
   }
 }
 
@@ -608,7 +833,7 @@ async function fetchRealbooruPostDetail(id: number) {
   )
   const document = parseHtml(html)
   const { rawTags, tags } = parseRealbooruTags(document, html)
-  const media = parseRealbooruMedia(document, html)
+  const media = parseRealbooruMedia(document, html, rawTags)
 
   const post = hydratePost({
     commentCount: queryAll(document, '.userComment').length,
@@ -634,8 +859,10 @@ function mergeRealbooruPost(base: FeedItem, detail: FeedItem) {
       ...base,
       ...detail,
       fileUrl: detail.fileUrl || base.fileUrl,
+      height: detail.height || base.height,
       mediaResolved: true,
       previewUrl: base.previewUrl || detail.previewUrl,
+      sampleHeight: detail.sampleHeight || base.sampleHeight || base.height,
       sampleUrl: base.sampleUrl || base.previewUrl || detail.sampleUrl,
       sourceUrl: detail.sourceUrl || base.sourceUrl,
       videoCandidates: [
@@ -648,6 +875,8 @@ function mergeRealbooruPost(base: FeedItem, detail: FeedItem) {
           ].filter(Boolean),
         ),
       ],
+      sampleWidth: detail.sampleWidth || base.sampleWidth || base.width,
+      width: detail.width || base.width,
     })
   }
 
@@ -657,11 +886,13 @@ function mergeRealbooruPost(base: FeedItem, detail: FeedItem) {
   return hydratePost({
     ...base,
     ...detail,
+    height: detail.height || base.height,
     mediaResolved: true,
     previewUrl:
       detail.mediaType === 'video'
         ? (basePreviewIsStill ? base.previewUrl : '') || detail.previewUrl
         : detail.previewUrl || base.previewUrl,
+    sampleHeight: detail.sampleHeight || base.sampleHeight || base.height,
     sampleUrl:
       detail.mediaType === 'video'
         ? (baseSampleIsStill ? base.sampleUrl : '') ||
@@ -669,7 +900,9 @@ function mergeRealbooruPost(base: FeedItem, detail: FeedItem) {
           detail.sampleUrl
         : detail.sampleUrl || base.sampleUrl,
     sourceUrl: detail.sourceUrl || base.sourceUrl,
+    sampleWidth: detail.sampleWidth || base.sampleWidth || base.width,
     videoCandidates: detail.videoCandidates?.length ? detail.videoCandidates : base.videoCandidates,
+    width: detail.width || base.width,
   })
 }
 
@@ -696,6 +929,91 @@ export async function enrichRealbooruPost(post: FeedItem) {
   realbooruDetailPromises.set(post.id, pending)
   const detail = await pending
   return mergeRealbooruPost(post, detail)
+}
+
+function getVideoCandidateExtension(url: string) {
+  return url.split('.').pop()?.split('?')[0]?.toLowerCase() ?? ''
+}
+
+export async function probeRealbooruVideoPost(post: FeedItem) {
+  if (
+    post.source !== 'realbooru' ||
+    post.mediaResolved === true ||
+    typeof document === 'undefined'
+  ) {
+    return null
+  }
+
+  const existing = realbooruVideoProbePromises.get(post.id)
+  if (existing) {
+    return existing
+  }
+
+  const candidates = getVideoPlaybackCandidates(post)
+  if (candidates.length === 0) {
+    return null
+  }
+
+  const probePromise = withRealbooruRequestSlot(async () => {
+    for (const candidate of candidates) {
+      const referrerPolicies: Array<'no-referrer' | 'origin-when-cross-origin'> = [
+        'no-referrer',
+        'origin-when-cross-origin',
+      ]
+
+      for (const referrerPolicy of referrerPolicies) {
+        const didLoad = await new Promise<boolean>((resolve) => {
+          const video = document.createElement('video')
+          let settled = false
+          let timeoutId = 0
+
+          const finalize = (result: boolean) => {
+            if (settled) {
+              return
+            }
+
+            settled = true
+            window.clearTimeout(timeoutId)
+            video.pause()
+            video.removeAttribute('src')
+            video.load()
+            resolve(result)
+          }
+
+          video.preload = 'metadata'
+          video.muted = true
+          video.playsInline = true
+          video.setAttribute('referrerpolicy', referrerPolicy)
+          video.onloadedmetadata = () => finalize(true)
+          video.onerror = () => finalize(false)
+          timeoutId = window.setTimeout(() => finalize(false), REALBOORU_VIDEO_PROBE_TIMEOUT_MS)
+          video.src = candidate
+          video.load()
+        })
+
+        if (!didLoad) {
+          continue
+        }
+
+        return hydratePost({
+          ...post,
+          fileExt: getVideoCandidateExtension(candidate) || 'mp4',
+          fileUrl: candidate,
+          mediaType: 'video',
+          videoCandidates: [
+            ...new Set([candidate, ...candidates]),
+          ],
+        })
+      }
+    }
+
+    return null
+  }).finally(() => {
+    realbooruVideoProbePromises.delete(post.id)
+  })
+
+  realbooruVideoProbePromises.set(post.id, probePromise)
+  return probePromise
 }
 
 function parseRealbooruTypeLabel(typeText = '') {

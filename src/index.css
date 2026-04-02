@@ -582,6 +582,7 @@ video {
 .card-media {
   position: relative;
   overflow: hidden;
+  aspect-ratio: var(--card-media-aspect-ratio, 1 / 1);
   border-radius: 0.95rem;
   background: var(--surface-subtle);
   outline: 1px solid rgba(255, 255, 255, 0.035);
@@ -675,10 +676,13 @@ video {
   animation: skeleton-shimmer 1.25s linear infinite;
 }
 
-.card-media-asset {
+.card-media .card-media-asset {
   position: relative;
   z-index: 1;
   display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   opacity: 0;
   transition: opacity 180ms ease;
 }

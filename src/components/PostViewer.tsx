@@ -2,10 +2,15 @@ import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useScrollLock } from '../hooks/useScrollLock'
-import { enrichRealbooruPost, needsRealbooruMediaEnrichment } from '../lib/api'
+import {
+  enrichRealbooruPost,
+  needsRealbooruMediaEnrichment,
+  probeRealbooruVideoPost,
+} from '../lib/api'
 import {
   getDetailMediaUrl,
   getMediaPosterUrl,
+  hasVideoPlaybackEvidence,
   getVideoPlaybackCandidates,
   getVideoPlaybackStateKey,
 } from '../lib/media'
@@ -28,11 +33,11 @@ function ViewerMedia({
   post: FeedItem
   videoFailed: boolean
 }) {
-  const videoCandidates = post.mediaType === 'video' ? getVideoPlaybackCandidates(post) : []
-  const videoPlaybackStateKey =
-    post.mediaType === 'video' ? getVideoPlaybackStateKey(post) : post.storageKey
+  const treatsAsVideo = hasVideoPlaybackEvidence(post)
+  const videoCandidates = treatsAsVideo ? getVideoPlaybackCandidates(post) : []
+  const videoPlaybackStateKey = treatsAsVideo ? getVideoPlaybackStateKey(post) : post.storageKey
 
-  if (post.mediaType === 'video' && (videoFailed || shouldAvoidInlineVideo(videoCandidates))) {
+  if (treatsAsVideo && (videoFailed || shouldAvoidInlineVideo(videoCandidates))) {
     if (post.source === 'realbooru') {
       console.log(`[video-debug:viewer:${post.id}] render-image-fallback`, {
         poster: getMediaPosterUrl(post) || post.previewUrl,
@@ -64,7 +69,7 @@ function ViewerMedia({
     )
   }
 
-  if (post.mediaType === 'video') {
+  if (treatsAsVideo) {
     const playbackUrl = getDetailMediaUrl(post)
 
     if (!playbackUrl) {
@@ -141,9 +146,10 @@ export function PostViewer({
   const [failedPlaybackKey, setFailedPlaybackKey] = useState('')
   const videoRecoveryAttemptedRef = useRef(false)
   const displayPost = resolvedPost ?? post
+  const displayPostIsVideo = hasVideoPlaybackEvidence(displayPost)
   const videoPlaybackStateKey = useMemo(
-    () => (displayPost.mediaType === 'video' ? getVideoPlaybackStateKey(displayPost) : ''),
-    [displayPost],
+    () => (displayPostIsVideo ? getVideoPlaybackStateKey(displayPost) : ''),
+    [displayPost, displayPostIsVideo],
   )
   const videoFailed = failedPlaybackKey === videoPlaybackStateKey
 
@@ -159,9 +165,24 @@ export function PostViewer({
     }
 
     let cancelled = false
-    void enrichRealbooruPost(post)
+    void probeRealbooruVideoPost(post)
+      .then((resolvedVideoPost) => {
+        if (cancelled || !resolvedVideoPost) {
+          return null
+        }
+
+        setResolvedPost(resolvedVideoPost)
+        return resolvedVideoPost
+      })
+      .then((resolvedVideoPost) => {
+        if (cancelled || resolvedVideoPost) {
+          return null
+        }
+
+        return enrichRealbooruPost(post)
+      })
       .then((nextPost) => {
-        if (!cancelled) {
+        if (!cancelled && nextPost) {
           setResolvedPost(nextPost)
         }
       })
@@ -204,7 +225,7 @@ export function PostViewer({
 
     if (
       displayPost.source === 'realbooru' &&
-      displayPost.mediaType === 'video' &&
+      displayPostIsVideo &&
       displayPost.mediaResolved !== true &&
       !videoRecoveryAttemptedRef.current
     ) {
@@ -220,7 +241,7 @@ export function PostViewer({
     }
 
     setFailedPlaybackKey(videoPlaybackStateKey)
-  }, [displayPost, videoPlaybackStateKey])
+  }, [displayPost, displayPostIsVideo, videoPlaybackStateKey])
 
   if (typeof document === 'undefined') {
     return null

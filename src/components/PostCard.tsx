@@ -8,7 +8,11 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
-import { enrichRealbooruPost, needsRealbooruMediaEnrichment } from '../lib/api'
+import {
+  enrichRealbooruPost,
+  needsRealbooruMediaEnrichment,
+  probeRealbooruVideoPost,
+} from '../lib/api'
 import {
   saveMedia,
   triggerHaptic,
@@ -18,8 +22,11 @@ import {
 } from '../lib/device'
 import { useScrollLock } from '../hooks/useScrollLock'
 import {
+  canRenderRealbooruMediaWithoutEnrichment,
   getCardMediaUrl,
+  getMediaDimensions,
   getMediaPosterUrl,
+  hasVideoPlaybackEvidence,
   getVideoPlaybackCandidates,
   getVideoPlaybackStateKey,
 } from '../lib/media'
@@ -87,10 +94,12 @@ function renderMedia(
   videoFailed: boolean,
   onVideoFailed: () => void,
 ) {
-  const videoCandidates = post.mediaType === 'video' ? getVideoPlaybackCandidates(post) : []
-  const canRenderInlineVideo = post.mediaType !== 'video' || !shouldAvoidInlineVideo(videoCandidates)
+  const mediaDimensions = getMediaDimensions(post)
+  const treatsAsVideo = hasVideoPlaybackEvidence(post)
+  const videoCandidates = treatsAsVideo ? getVideoPlaybackCandidates(post) : []
+  const canRenderInlineVideo = !treatsAsVideo || !shouldAvoidInlineVideo(videoCandidates)
 
-  if (post.mediaType === 'video' && (videoFailed || !canRenderInlineVideo)) {
+  if (treatsAsVideo && (videoFailed || !canRenderInlineVideo)) {
     if (post.source === 'realbooru') {
       console.log(`[video-debug:card:${post.id}] render-image-fallback`, {
         canRenderInlineVideo,
@@ -110,18 +119,18 @@ function renderMedia(
         alt={post.rawTags || `Post #${post.id}`}
         className={`card-media-asset${mediaLoaded ? ' is-loaded' : ''}`}
         draggable={false}
-        height={post.sampleHeight || post.height || undefined}
+        height={mediaDimensions.height}
         loading="lazy"
         onError={onMediaReady}
         onLoad={onMediaReady}
         referrerPolicy="no-referrer"
         src={imageUrl}
-        width={post.sampleWidth || post.width || undefined}
+        width={mediaDimensions.width}
       />
     )
   }
 
-  if (post.mediaType === 'video') {
+  if (treatsAsVideo) {
     const playbackUrl = getCardMediaUrl(post)
 
     if (!playbackUrl) {
@@ -150,7 +159,7 @@ function renderMedia(
         debugLabel={post.source === 'realbooru' ? `card:${post.id}` : undefined}
         draggable={false}
         fallbackSources={videoCandidates}
-        height={post.sampleHeight || post.height || undefined}
+        height={mediaDimensions.height}
         key={getVideoPlaybackStateKey(post)}
         loadStrategy="visible"
         loop
@@ -161,7 +170,7 @@ function renderMedia(
         playsInline
         preload={autoplayEnabled ? 'metadata' : 'none'}
         src={playbackUrl}
-        width={post.sampleWidth || post.width || undefined}
+        width={mediaDimensions.width}
       />
     )
   }
@@ -177,13 +186,13 @@ function renderMedia(
       alt={post.rawTags || `Post #${post.id}`}
       className={`card-media-asset${mediaLoaded ? ' is-loaded' : ''}`}
       draggable={false}
-      height={post.sampleHeight || post.height || undefined}
+      height={mediaDimensions.height}
       loading="lazy"
       onError={onMediaReady}
       onLoad={onMediaReady}
       referrerPolicy="no-referrer"
       src={imageUrl}
-      width={post.sampleWidth || post.width || undefined}
+      width={mediaDimensions.width}
     />
   )
 }
@@ -220,9 +229,10 @@ export function PostCard({
   const lastTapRef = useRef(0)
   const videoRecoveryAttemptedRef = useRef(false)
   const saved = savedIds.has(post.storageKey)
-  const aspectRatio = (post.sampleHeight || post.height || 1) / (post.sampleWidth || post.width || 1)
+  const mediaDimensions = getMediaDimensions(post)
+  const aspectRatio = mediaDimensions.height / mediaDimensions.width
   const isLongPost = aspectRatio >= LONG_POST_RATIO
-  const isVideoPost = post.mediaType === 'video'
+  const isVideoPost = hasVideoPlaybackEvidence(post)
   const viewerPost = activeViewerIndex === null ? null : viewerPosts[activeViewerIndex] ?? null
   const videoPlaybackStateKey = useMemo(
     () => (isVideoPost ? getVideoPlaybackStateKey(post) : ''),
@@ -235,7 +245,7 @@ export function PostCard({
     setMediaLoaded(false)
     setVideoFailed(false)
     videoRecoveryAttemptedRef.current = false
-  }, [post.id, post.previewUrl, post.sampleUrl, post.mediaType, videoPlaybackStateKey])
+  }, [post.id, post.previewUrl, post.sampleUrl, post.mediaType, post.rawTags, videoPlaybackStateKey])
 
   useEffect(() => {
     if (!needsRealbooruMediaEnrichment(post) || !mediaRef.current) {
@@ -244,6 +254,7 @@ export function PostCard({
 
     let cancelled = false
     const node = mediaRef.current
+    const canRenderWithoutUpgrade = canRenderRealbooruMediaWithoutEnrichment(post)
     const observer = new IntersectionObserver(
       (entries) => {
         const [entry] = entries
@@ -252,9 +263,24 @@ export function PostCard({
         }
 
         observer.disconnect()
-        void enrichRealbooruPost(post)
+        void probeRealbooruVideoPost(post)
+          .then((resolvedVideoPost) => {
+            if (cancelled || !resolvedVideoPost) {
+              return null
+            }
+
+            onEnriched?.(resolvedVideoPost)
+            return resolvedVideoPost
+          })
+          .then((resolvedVideoPost) => {
+            if (cancelled || resolvedVideoPost || canRenderWithoutUpgrade) {
+              return
+            }
+
+            return enrichRealbooruPost(post)
+          })
           .then((nextPost) => {
-            if (!cancelled) {
+            if (!cancelled && nextPost) {
               onEnriched?.(nextPost)
             }
           })
@@ -398,7 +424,7 @@ export function PostCard({
 
     if (
       post.source === 'realbooru' &&
-      post.mediaType === 'video' &&
+      isVideoPost &&
       post.mediaResolved !== true &&
       !videoRecoveryAttemptedRef.current
     ) {
@@ -418,7 +444,7 @@ export function PostCard({
 
     setVideoFailed(true)
     setMediaLoaded(true)
-  }, [onEnriched, post])
+  }, [isVideoPost, onEnriched, post])
 
   useEffect(() => {
     if (!viewerPost) {
@@ -577,6 +603,7 @@ export function PostCard({
         <div
           className={`card-media${isLongPost && !expanded ? ' truncated' : ''}${mediaLoaded ? '' : ' is-media-loading'}`}
           ref={mediaRef}
+          style={{ aspectRatio: `${mediaDimensions.width} / ${mediaDimensions.height}` }}
           onContextMenu={(event) => event.preventDefault()}
           onDragStart={(event) => event.preventDefault()}
           onPointerCancel={isVideoPost ? undefined : handlePressCancel}

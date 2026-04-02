@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { getPreloadImageUrl } from '../lib/media'
+import { getMediaDimensions, getPreloadImageUrl } from '../lib/media'
 import { useAppContext } from '../state/useAppContext'
 import { PostCard } from './PostCard'
 import type { FeedItem } from '../types'
@@ -32,8 +32,7 @@ function estimatePostHeight(
   viewportHeight: number,
   rootFontSize: number,
 ) {
-  const width = post.sampleWidth || post.width || 1
-  const height = post.sampleHeight || post.height || width
+  const { height, width } = getMediaDimensions(post)
   const mediaRatio = height / width
 
   if (mediaRatio >= LONG_POST_RATIO) {
