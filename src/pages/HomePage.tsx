@@ -8,6 +8,17 @@ import { getLibraryItems } from '../lib/storage'
 import { useAppContext } from '../state/useAppContext'
 import type { LocalLibraryItem } from '../types'
 
+function sameSavedSnapshot(current: LocalLibraryItem[], next: LocalLibraryItem[]) {
+  if (current.length !== next.length) {
+    return false
+  }
+
+  return current.every(
+    (post, index) =>
+      post.storageKey === next[index]?.storageKey && post.timestamp === next[index]?.timestamp,
+  )
+}
+
 export function HomePage({ active = true }: { active?: boolean }) {
   const { preferences, hiddenIds, libraryVersion, mutedTags, savedIds } = useAppContext()
   const [savedPosts, setSavedPosts] = useState<LocalLibraryItem[]>([])
@@ -28,8 +39,7 @@ export function HomePage({ active = true }: { active?: boolean }) {
 
     void getLibraryItems('saved').then((items) => {
       if (!cancelled) {
-        // Keep the active home feed stable after it has been seeded once.
-        setSavedPosts((current) => (current.length === 0 ? items : current))
+        setSavedPosts((current) => (sameSavedSnapshot(current, items) ? current : items))
       }
     })
 
