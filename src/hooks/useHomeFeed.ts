@@ -38,13 +38,21 @@ function filterExcludedPosts(posts: FeedItem[], excludedIds: Set<string>) {
 const SOURCE_ORDER: SourceId[] = ['rule34', 'realbooru']
 
 export function useHomeFeed(options: {
+  active?: boolean
   blockedTags: string[]
   enabledSources: Record<SourceId, boolean>
   excludedPostIds: Set<string>
   rule34Credentials?: ApiCredentials
   savedPosts: LocalLibraryItem[]
 }) {
-  const { blockedTags, enabledSources, excludedPostIds, rule34Credentials, savedPosts } = options
+  const {
+    active = true,
+    blockedTags,
+    enabledSources,
+    excludedPostIds,
+    rule34Credentials,
+    savedPosts,
+  } = options
   const [posts, setPosts] = useState<FeedItem[]>([])
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -314,8 +322,12 @@ export function useHomeFeed(options: {
   }, [planning, rule34Credentials])
 
   useEffect(() => {
+    if (!active) {
+      return
+    }
+
     const node = sentinelRef.current
-    if (!node || posts.length === 0 || loading || !hasMore) {
+    if (!node || loading || !hasMore) {
       return
     }
 
@@ -392,7 +404,7 @@ export function useHomeFeed(options: {
 
     observer.observe(node)
     return () => observer.disconnect()
-  }, [hasMore, loading, loadingMore, posts, rule34Credentials])
+  }, [active, hasMore, loading, loadingMore, posts, rule34Credentials])
 
   return {
     error,

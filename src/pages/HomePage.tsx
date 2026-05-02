@@ -49,6 +49,7 @@ export function HomePage({ active = true }: { active?: boolean }) {
   }, [libraryVersion])
 
   const feed = useHomeFeed({
+    active,
     blockedTags,
     enabledSources: preferences.homeProviders,
     excludedPostIds: savedIds,
