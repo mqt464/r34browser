@@ -303,6 +303,8 @@ function supportsDownloadLinks() {
   return typeof HTMLAnchorElement !== 'undefined' && 'download' in HTMLAnchorElement.prototype
 }
 
+type SaveMediaStrategy = 'auto' | 'download-first'
+
 async function shareFile(post: FeedItem) {
   if (
     typeof navigator.share !== 'function' ||
@@ -346,27 +348,37 @@ async function shareMediaUrl(post: FeedItem) {
 }
 
 export async function saveMedia(post: FeedItem, preferShareOnMobile: boolean) {
+  return saveMediaWithStrategy(post, preferShareOnMobile, 'auto')
+}
+
+export async function saveMediaWithStrategy(
+  post: FeedItem,
+  preferShareOnMobile: boolean,
+  strategy: SaveMediaStrategy,
+) {
   const mobile = isMobileDevice()
-  const shouldPreferShare = mobile && preferShareOnMobile
+  const shouldPreferShare =
+    strategy === 'download-first' ? false : mobile && preferShareOnMobile
   const downloadUrl = getDetailMediaUrl(post) || post.fileUrl
+  const filename = createDownloadName(post)
 
   if (!shouldPreferShare && supportsDownloadLinks()) {
-    startDownload(downloadUrl, createDownloadName(post))
+    startDownload(downloadUrl, filename)
     return 'downloaded'
   }
 
-  if (shouldPreferShare) {
+  if (mobile) {
     try {
-      const shared = await shareMediaUrl(post)
+      const shared = strategy === 'download-first' ? await shareFile(post) : await shareMediaUrl(post)
       if (shared) {
         return 'shared'
       }
     } catch {
-      // Fall through to file share or direct download.
+      // Fall through to alternate share or direct download.
     }
 
     try {
-      const shared = await shareFile(post)
+      const shared = strategy === 'download-first' ? await shareMediaUrl(post) : await shareFile(post)
       if (shared) {
         return 'shared'
       }
@@ -375,7 +387,7 @@ export async function saveMedia(post: FeedItem, preferShareOnMobile: boolean) {
     }
   }
 
-  startDownload(downloadUrl, createDownloadName(post))
+  startDownload(downloadUrl, filename)
   return 'downloaded'
 }
 

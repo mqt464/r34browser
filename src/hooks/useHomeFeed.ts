@@ -91,15 +91,14 @@ export function useHomeFeed(options: {
     }),
     [savedPosts],
   )
-  const modelKey = useMemo(
+  const feedIdentityKey = useMemo(
     () =>
       JSON.stringify({
         blockedTags,
         enabledSources,
-        savedPosts: savedPosts.map((post) => `${post.storageKey}:${post.timestamp}`),
         rule34UserId: rule34Credentials?.userId ?? '',
       }),
-    [blockedTags, enabledSources, rule34Credentials?.userId, savedPosts],
+    [blockedTags, enabledSources, rule34Credentials?.userId],
   )
 
   useEffect(() => {
@@ -133,7 +132,7 @@ export function useHomeFeed(options: {
         source: 'realbooru',
       },
     }
-  }, [modelKey])
+  }, [feedIdentityKey])
 
   useEffect(() => {
     let cancelled = false
@@ -194,8 +193,10 @@ export function useHomeFeed(options: {
               ...nextStates[source],
               hasMore: true,
               model,
+              nextPage: 0,
               partialError: null,
               planning: false,
+              recentAnchors: [],
             }
           } catch (caughtError) {
             const message = caughtError instanceof Error ? caughtError.message : 'Unknown error'
@@ -231,6 +232,12 @@ export function useHomeFeed(options: {
 
   useEffect(() => {
     if (planning) {
+      return
+    }
+
+    if (posts.length > 0) {
+      setLoading(false)
+      setLoadingMore(false)
       return
     }
 
@@ -319,7 +326,7 @@ export function useHomeFeed(options: {
     return () => {
       cancelled = true
     }
-  }, [planning, rule34Credentials])
+  }, [planning, posts.length, rule34Credentials])
 
   useEffect(() => {
     if (!active) {

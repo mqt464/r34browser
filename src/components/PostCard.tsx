@@ -15,6 +15,7 @@ import {
 } from '../lib/api'
 import {
   saveMedia,
+  saveMediaWithStrategy,
   triggerHaptic,
   triggerHoldMenuHoverHaptic,
   triggerHoldMenuOpenHaptic,
@@ -377,7 +378,11 @@ export function PostCard({
     if (source === 'default') {
       triggerHaptic(preferences.hapticsEnabled, 'nudge')
     }
-    await saveMedia(post, preferences.preferShareOnMobile)
+    if (source === 'hold-menu') {
+      await saveMediaWithStrategy(post, preferences.preferShareOnMobile, 'download-first')
+    } else {
+      await saveMedia(post, preferences.preferShareOnMobile)
+    }
     await recordDownload(post)
   }
 
