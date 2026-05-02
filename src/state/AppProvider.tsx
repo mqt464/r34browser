@@ -82,6 +82,10 @@ export function AppProvider({ children }: PropsWithChildren) {
           ...current.rule34Credentials,
           ...updates.rule34Credentials,
         },
+        homeProviders: {
+          ...current.homeProviders,
+          ...updates.homeProviders,
+        },
         excludeFilters: {
           ...current.excludeFilters,
           ...updates.excludeFilters,

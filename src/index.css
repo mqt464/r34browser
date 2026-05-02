@@ -577,15 +577,18 @@ video {
 
 .feed-card {
   display: block;
+  width: 100%;
 }
 
 .card-media {
   position: relative;
+  width: 100%;
   overflow: hidden;
   aspect-ratio: var(--card-media-aspect-ratio, 1 / 1);
   border-radius: 0.95rem;
   background: var(--surface-subtle);
   outline: 1px solid rgba(255, 255, 255, 0.035);
+  justify-self: stretch;
   user-select: none;
   -webkit-user-drag: none;
   -webkit-touch-callout: none;
@@ -704,7 +707,13 @@ video {
 }
 
 .card-media.truncated {
+  height: min(42rem, 74vh);
   max-height: min(42rem, 74vh);
+  aspect-ratio: auto;
+}
+
+.card-media.truncated .card-media-asset {
+  height: 100%;
 }
 
 .expand-post-button {

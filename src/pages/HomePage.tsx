@@ -12,6 +12,8 @@ export function HomePage({ active = true }: { active?: boolean }) {
   const { preferences, hiddenIds, libraryVersion, mutedTags, savedIds } = useAppContext()
   const [savedPosts, setSavedPosts] = useState<LocalLibraryItem[]>([])
   const rule34Credentials = getCredentialsForSource(preferences, 'rule34')
+  const isRule34HomeEnabled = preferences.homeProviders.rule34
+  const hasEnabledHomeProvider = preferences.homeProviders.rule34 || preferences.homeProviders.realbooru
   const hasRule34Credentials = Boolean(rule34Credentials?.userId && rule34Credentials.apiKey)
   const blockedTags = useMemo(
     () =>
@@ -38,6 +40,7 @@ export function HomePage({ active = true }: { active?: boolean }) {
 
   const feed = useHomeFeed({
     blockedTags,
+    enabledSources: preferences.homeProviders,
     excludedPostIds: savedIds,
     rule34Credentials,
     savedPosts,
@@ -51,7 +54,13 @@ export function HomePage({ active = true }: { active?: boolean }) {
 
   return (
     <div className="page app-feed-page">
-      {!hasRule34Credentials ? (
+      {!hasEnabledHomeProvider ? (
+        <section aria-live="polite" className="status-banner error" role="status">
+          Enable at least one provider in Settings to build home feed.
+        </section>
+      ) : null}
+
+      {isRule34HomeEnabled && !hasRule34Credentials ? (
         <section aria-live="polite" className="status-banner error" role="status">
           Add your <span className="mono">user_id</span> and <span className="mono">api_key</span> in Settings to keep the Rule34 pool active.
         </section>

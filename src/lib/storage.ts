@@ -2,7 +2,7 @@ import { openDB } from 'idb'
 import { DEFAULT_EXCLUDE_FILTERS, normalizeExcludeFilters } from './preferences'
 import { normalizeRealbooruProxyUrl } from './realbooruProxy'
 import { createStorageKey } from './sources'
-import type { FeedSignals, LocalLibraryItem, UserPreferences } from '../types'
+import type { FeedSignals, HomeProviderState, LocalLibraryItem, UserPreferences } from '../types'
 
 const DB_NAME = 'r34browser'
 const DB_VERSION = 3
@@ -21,6 +21,11 @@ const POST_STORES: Record<'saved' | 'history' | 'downloads', PostStoreName> = {
   downloads: 'downloadItems',
 }
 
+const DEFAULT_HOME_PROVIDERS: HomeProviderState = {
+  rule34: true,
+  realbooru: true,
+}
+
 const defaultPreferences: UserPreferences = {
   rule34Credentials: {
     userId: '',
@@ -28,6 +33,7 @@ const defaultPreferences: UserPreferences = {
   },
   defaultSource: 'rule34',
   searchSource: 'rule34',
+  homeProviders: DEFAULT_HOME_PROVIDERS,
   realbooruProxyUrl: normalizeRealbooruProxyUrl(undefined),
   excludeFilters: DEFAULT_EXCLUDE_FILTERS,
   masonryColumns: 1,
@@ -118,6 +124,13 @@ function sortLibrary(items: LocalLibraryItem[]) {
   return items.sort((left, right) => right.timestamp - left.timestamp)
 }
 
+function normalizeHomeProviders(providers?: Partial<HomeProviderState>) {
+  return {
+    ...DEFAULT_HOME_PROVIDERS,
+    ...providers,
+  }
+}
+
 export function loadPreferences() {
   const rawValue = localStorage.getItem(PREFERENCES_KEY)
   if (!rawValue) {
@@ -136,6 +149,7 @@ export function loadPreferences() {
         ...defaultPreferences.rule34Credentials,
         ...(parsed.rule34Credentials ?? parsed.credentials),
       },
+      homeProviders: normalizeHomeProviders(parsed.homeProviders),
       excludeFilters: normalizeExcludeFilters(parsed.excludeFilters),
       defaultSource: parsed.defaultSource ?? 'rule34',
       searchSource: parsed.searchSource ?? parsed.defaultSource ?? 'rule34',

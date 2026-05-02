@@ -8,11 +8,13 @@ export interface ApiCredentials {
 export type ExcludeFilterId = 'ai' | 'scat' | 'loliShota'
 
 export type ExcludeFilterState = Record<ExcludeFilterId, boolean>
+export type HomeProviderState = Record<SourceId, boolean>
 
 export interface UserPreferences {
   rule34Credentials: ApiCredentials
   defaultSource: SourceId
   searchSource: SourceId
+  homeProviders: HomeProviderState
   realbooruProxyUrl: string
   excludeFilters: ExcludeFilterState
   masonryColumns: number
@@ -23,10 +25,11 @@ export interface UserPreferences {
 }
 
 export type PreferenceUpdates = Partial<
-  Omit<UserPreferences, 'rule34Credentials' | 'excludeFilters'>
+  Omit<UserPreferences, 'rule34Credentials' | 'excludeFilters' | 'homeProviders'>
 > & {
   rule34Credentials?: Partial<ApiCredentials>
   excludeFilters?: Partial<ExcludeFilterState>
+  homeProviders?: Partial<HomeProviderState>
 }
 
 export interface FeedItem {

@@ -2,9 +2,10 @@ import { LoaderCircle } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { testCredentials } from '../lib/api'
 import { EXCLUDE_FILTERS } from '../lib/preferences'
+import { getSourceLabel } from '../lib/sources'
 import { clearAllLocalData, getLibraryCounts } from '../lib/storage'
 import { useAppContext } from '../state/useAppContext'
-import type { ApiCredentials, ExcludeFilterId } from '../types'
+import type { ApiCredentials, ExcludeFilterId, SourceId } from '../types'
 
 type StatusKind = 'success' | 'error' | 'info'
 type ValidationState = {
@@ -164,6 +165,11 @@ export function SettingsPage() {
     { label: 'History', value: counts.history },
     { label: 'Muted tags', value: mutedTags.size },
   ]
+  const homeProviderOptions = (['rule34', 'realbooru'] as const).map((source: SourceId) => ({
+    source,
+    enabled: preferences.homeProviders[source],
+    label: getSourceLabel(source),
+  }))
 
   return (
     <div className="page settings-page">
@@ -278,6 +284,40 @@ export function SettingsPage() {
                 />
               </div>
             </label>
+          </div>
+        </section>
+
+        <section className="settings-card">
+          <header className="settings-card-heading">
+            <h2>Home</h2>
+          </header>
+
+          <div className="settings-list">
+            {homeProviderOptions.map((provider) => (
+              <label className="settings-row settings-row-toggle" key={provider.source}>
+                <div className="settings-row-copy">
+                  <span className="settings-row-title">{provider.label}</span>
+                  <span className="settings-row-note">Include this provider in home feed.</span>
+                </div>
+                <span className="settings-switch">
+                  <input
+                    checked={provider.enabled}
+                    className="settings-switch-input"
+                    onChange={() =>
+                      updatePreferences({
+                        homeProviders: {
+                          [provider.source]: !provider.enabled,
+                        },
+                      })
+                    }
+                    type="checkbox"
+                  />
+                  <span className="settings-switch-track">
+                    <span className="settings-switch-thumb" />
+                  </span>
+                </span>
+              </label>
+            ))}
           </div>
         </section>
 

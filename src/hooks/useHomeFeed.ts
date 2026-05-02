@@ -39,11 +39,12 @@ const SOURCE_ORDER: SourceId[] = ['rule34', 'realbooru']
 
 export function useHomeFeed(options: {
   blockedTags: string[]
+  enabledSources: Record<SourceId, boolean>
   excludedPostIds: Set<string>
   rule34Credentials?: ApiCredentials
   savedPosts: LocalLibraryItem[]
 }) {
-  const { blockedTags, excludedPostIds, rule34Credentials, savedPosts } = options
+  const { blockedTags, enabledSources, excludedPostIds, rule34Credentials, savedPosts } = options
   const [posts, setPosts] = useState<FeedItem[]>([])
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -86,10 +87,11 @@ export function useHomeFeed(options: {
     () =>
       JSON.stringify({
         blockedTags,
+        enabledSources,
         savedPosts: savedPosts.map((post) => `${post.storageKey}:${post.timestamp}`),
         rule34UserId: rule34Credentials?.userId ?? '',
       }),
-    [blockedTags, rule34Credentials?.userId, savedPosts],
+    [blockedTags, enabledSources, rule34Credentials?.userId, savedPosts],
   )
 
   useEffect(() => {
@@ -135,6 +137,17 @@ export function useHomeFeed(options: {
 
       await Promise.all(
         SOURCE_ORDER.map(async (source) => {
+          if (!enabledSources[source]) {
+            nextStates[source] = {
+              ...nextStates[source],
+              hasMore: false,
+              model: null,
+              partialError: null,
+              planning: false,
+            }
+            return
+          }
+
           const sourceSavedPosts = savedPostsBySource[source]
           if (sourceSavedPosts.length === 0) {
             nextStates[source] = {
@@ -197,10 +210,8 @@ export function useHomeFeed(options: {
       statesRef.current = nextStates
       setPlanning(false)
       setPartialErrors(errors)
-
-      if (!nextStates.rule34.model && !nextStates.realbooru.model) {
-        setError(errors[0] ?? 'Could not build the home feed.')
-      }
+      setHasMore(SOURCE_ORDER.some((source) => Boolean(nextStates[source].model)))
+      setError(errors.length > 0 && !nextStates.rule34.model && !nextStates.realbooru.model ? errors[0] : null)
     }
 
     void run()
@@ -208,7 +219,7 @@ export function useHomeFeed(options: {
     return () => {
       cancelled = true
     }
-  }, [blockedTags, rule34Credentials, savedPostsBySource])
+  }, [blockedTags, enabledSources, rule34Credentials, savedPostsBySource])
 
   useEffect(() => {
     if (planning) {
@@ -217,6 +228,7 @@ export function useHomeFeed(options: {
 
     const activeStates = SOURCE_ORDER.filter((source) => Boolean(statesRef.current[source].model))
     if (activeStates.length === 0) {
+      setHasMore(false)
       setLoading(false)
       setLoadingMore(false)
       return
